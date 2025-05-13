@@ -13,7 +13,9 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::JsonConfig::default())
             .service(
                 web::scope("/api/v1")
-                        .service(web::scope("/order").route("/", web::post().to(create_order))),
+                    .service(web::scope("/order").route("/", web::post().to(create_order)))
+                    .service(web::scope("/order").route("/", web::delete().to(cancel_order)))
+                    .service(web::scope("/order").route("/order_id", web::put().to(get_open_orders)))
             )
     })
     .bind(("127.0.0.1", 5000))?
