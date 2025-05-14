@@ -43,7 +43,7 @@ pub async fn cancel_order(data: web::Json<CancelOrderRequest>) -> impl Responder
     }
 }
 
-pub async fn get_open_orders(data: web::Json<GetOpenOrdersRequest>) -> impl Responder {
+pub async fn get_open_orders(data: web::Query<GetOpenOrdersRequest>) -> impl Responder {
     let message_to_engine = MessageToEngine {
         message_type: MessageToType::GetOpenOrders,
         data: EngineMessageData::GetOpenOrders(data.into_inner()),

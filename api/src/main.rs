@@ -19,6 +19,9 @@ async fn main() -> std::io::Result<()> {
                     .service(web::scope("/order").route("/open", web::get().to(get_open_orders))),
             )
             .service(web::scope("/depth").route("/", web::get().to(get_depth)))
+            .service(web::scope("/klines").route("/", web::get().to(get_klines)))
+            .service(web::scope("/tickers").route("/", web::get().to(get_tickers)))
+            .service(web::scope("/trades").route("/", web::get().to(get_trades)))
     })
     .bind(("127.0.0.1", 8000))?
     .run()
