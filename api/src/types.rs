@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MessageToEngine {
-    pub message_type: MessageType,
-    pub data: EngineMessageData
+    pub message_type: MessageToType,
+    pub data: EngineMessageData,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,9 +41,73 @@ pub enum Side {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum MessageType {
+pub enum MessageToType {
     PlaceOrder,
     CancelOrder,
     GetOpenOrders,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum MessageFromType {
+    Depth,
+    OrderCanceled,
+    OrderPlaced,
+    OpenOrders,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MessageFromOrderbook {
+    pub message_type: MessageFromType,
+    pub data: OrderbookMessageData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum OrderbookMessageData {
+    Depth(Depth),
+    OrderCanceled(OrderCanceled),
+    OrderPlaced(OrderPlaced),
+    OpenOrders(OpenOrders),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Depth {
+    pub market: String,
+    asks: Vec<String>,
+    bids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OrderCanceled {
+    pub order_id: String,
+    pub executed_quantity: u32,
+    pub remaining_quantity: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OrderPlaced {
+    pub order_id: String,
+    pub executed_quantity: u32,
+    pub fills: Vec<Fill>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Fill {
+    pub price: String,
+    pub quantity: u32,
+    pub trade_id: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OpenOrders {
+    pub market: String,
+    pub orders: Vec<Order>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Order {
+    pub order_id: String,
+    pub price: String,
+    pub executed_quantity: u32,
+    pub quantity: u32,
+    pub user_id: String,
+}
