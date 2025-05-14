@@ -11,6 +11,7 @@ pub enum EngineMessageData {
     PlaceOrder(PlaceOrderRequest),
     CancelOrder(CancelOrderRequest),
     GetOpenOrders(GetOpenOrdersRequest),
+    GetDepth(GetDepthRequest),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,6 +36,11 @@ pub struct GetOpenOrdersRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct GetDepthRequest {
+    pub market: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Side {
     Buy,
     Sell,
@@ -45,6 +51,7 @@ pub enum MessageToType {
     PlaceOrder,
     CancelOrder,
     GetOpenOrders,
+    GetDepth,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
