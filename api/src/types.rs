@@ -19,7 +19,7 @@ pub struct PlaceOrderRequest {
     pub market: String,
     pub price: String,
     pub quantity: String,
-    pub side: Side,
+    pub side: String,
     pub user_id: String,
 }
 
@@ -38,12 +38,6 @@ pub struct GetOpenOrdersRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetDepthRequest {
     pub market: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum Side {
-    Buy,
-    Sell,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
