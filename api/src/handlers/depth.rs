@@ -13,13 +13,8 @@ pub async fn get_depth(symbol: web::Query<String>) -> impl Responder {
     };
     let redis_manager = RedisManager::get_instance();
 
-    match redis_manager.lock() {
-        Ok(manager) => match manager.send_and_await(message_to_engine).await {
-            Ok(response) => HttpResponse::Ok().json(response),
-            Err(e) => HttpResponse::InternalServerError().body(format!("Error: {}", e)),
-        },
-        Err(e) => {
-            HttpResponse::InternalServerError().body(format!("Redis manager lock error: {}", e))
-        }
+    match redis_manager.send_and_await(message_to_engine).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => HttpResponse::InternalServerError().body(format!("Error: {}", e)),
     }
 }

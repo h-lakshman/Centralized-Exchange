@@ -8,6 +8,7 @@ use handlers::*;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv::dotenv().ok();
     HttpServer::new(|| {
         App::new()
             .wrap(Cors::permissive())
