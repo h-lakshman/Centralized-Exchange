@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct Order {
@@ -21,6 +22,11 @@ pub struct Fills {
 struct OrderCreated {
     executed_quantity: u64,
     fills: Vec<Fills>,
+}
+
+struct OrderbookDepth {
+    bids: Vec<[String; 2]>,
+    asks: Vec<[String; 2]>,
 }
 
 enum Side {
@@ -152,5 +158,56 @@ impl Orderbook {
             fills,
             executed_quantity: executed_qty,
         }
+    }
+
+    //make this faster ,compute this during order matching
+    fn get_depth(&self) -> OrderbookDepth {
+        let mut bids: Vec<[String; 2]> = Vec::new();
+        let mut asks: Vec<[String; 2]> = Vec::new();
+
+        let mut bids_map: HashMap<String, u64> = HashMap::new();
+        let mut asks_map: HashMap<String, u64> = HashMap::new();
+
+        for order in &self.bids {
+            let price = order.price.to_string();
+            *bids_map.entry(price).or_insert(0) += order.quantity;
+        }
+        for order in &self.asks {
+            let price = order.price.to_string();
+            *asks_map.entry(price).or_insert(0) += order.quantity;
+        }
+
+        for (price, qty) in bids_map {
+            bids.push([price, qty.to_string()]);
+        }
+        for (price, qty) in asks_map {
+            asks.push([price, qty.to_string()]);
+        }
+        OrderbookDepth { bids, asks }
+    }
+
+    fn cancel_bid(&mut self, order: Order) -> u64 {
+        let index = self
+            .bids
+            .iter()
+            .position(|bid| bid.order_id == order.order_id);
+        if let Some(index) = index {
+            self.bids.remove(index);
+            return order.price;
+        }
+        return 0;
+    }
+
+    fn cancel_ask(&mut self, order: Order) -> u64 {
+        let index = self
+            .asks
+            .iter()
+            .position(|ask| ask.order_id == order.order_id);
+        if let Some(index) = index {
+            let price = self.asks[index].price;
+            self.asks.remove(index);
+            return price;
+        }
+        return 0;
     }
 }
