@@ -32,13 +32,13 @@ impl RedisManager {
         &self,
         message: MessageToEngine,
     ) -> Result<MessageFromOrderbook, Box<dyn Error>> {
-        // async connectors
+        // async redis connectors
         let client_conn = self.client.get_async_connection().await?;
         let mut publisher_conn = self.publisher.get_async_connection().await?;
 
         let client_id = self.get_random_client_id();
 
-        // Set up pubsub
+        //pubsub setup
         let mut pubsub = client_conn.into_pubsub();
         pubsub.subscribe(&client_id).await?;
         let mut pubsub_stream = pubsub.on_message();
@@ -52,6 +52,8 @@ impl RedisManager {
         if let Some(msg) = pubsub_stream.next().await {
             let response: String = msg.get_payload()?;
             let result: MessageFromOrderbook = serde_json::from_str(&response)?;
+            drop(pubsub_stream); //droppin stream cos on_message takes mut ref
+            pubsub.unsubscribe(&client_id).await?;
             Ok(result)
         } else {
             Err("No message received".into())
