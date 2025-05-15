@@ -210,4 +210,13 @@ impl Orderbook {
         }
         return 0;
     }
+
+    fn get_open_orders(&self, user_id: String) -> Vec<Order> {
+        self.bids
+            .iter()
+            .chain(self.asks.iter())
+            .filter(|order| order.user_id == user_id)
+            .cloned()
+            .collect()
+    }
 }
