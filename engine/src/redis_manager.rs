@@ -1,5 +1,5 @@
-use crate::types::DbMessageType;
-use redis::{Client, Commands, Connection};
+use crate::types::{DbMessageType, MessageToApi};
+use redis::{Client, Commands};
 use serde::{Deserialize, Serialize};
 use std::{env, error::Error, sync::OnceLock};
 
@@ -67,12 +67,14 @@ impl RedisManager {
         Ok(())
     }
 
-    pub fn send_to_api(&self, channel: &str, message: DbMessage) -> Result<(), Box<dyn Error>> {
+    pub fn send_to_api(
+        &self,
+        channel: String,
+        message: MessageToApi,
+    ) -> Result<(), Box<dyn Error>> {
         let mut connection = self.client.get_connection()?;
         let payload = serde_json::to_string(&message)?;
         let _: () = connection.publish(channel, payload)?;
         Ok(())
     }
-
-    //
 }

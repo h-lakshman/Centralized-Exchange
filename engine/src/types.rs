@@ -45,3 +45,63 @@ pub struct Fill {
     pub qty: u64,
     pub trade_id: u64,
 }
+
+//Recieve from Api
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MessageFromApi {
+    CreateOrder(CreateOrderPayload),
+    CancelOrder(CancelOrderPayload),
+    GetDepth(GetDepthPayload),
+    GetOpenOrders(GetOpenOrdersPayload),
+    OnRamp(OnRampPayload),
+}
+#[derive(Serialize, Deserialize)]
+pub struct CreateOrderPayload {
+    pub market: String,
+    pub price: String,
+    pub quantity: String,
+    pub side: Side,
+    pub user_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CancelOrderPayload {
+    pub order_id: String,
+    pub user_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetDepthPayload {
+    pub market: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetOpenOrdersPayload {
+    pub market: String,
+    pub user_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct OnRampPayload {
+    pub market: String,
+    pub user_id: String,
+    pub txn_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+impl Side {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Side::Buy => "buy",
+            Side::Sell => "sell",
+        }
+    }
+}

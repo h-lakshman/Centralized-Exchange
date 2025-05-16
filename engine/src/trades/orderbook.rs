@@ -4,33 +4,33 @@ use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Order {
-    price: u64,
-    quantity: u64,
-    order_id: String,
-    filled: u64,
-    side: String,
-    user_id: String,
+    pub price: u64,
+    pub quantity: u64,
+    pub order_id: String,
+    pub filled: u64,
+    pub side: String,
+    pub user_id: String,
 }
 
-pub struct Fills {
-    price: String,
-    qty: u64,
-    trade_id: u64,
-    other_user_id: String,
-    marker_order_id: String,
+pub struct Fill {
+    pub price: String,
+    pub qty: u64,
+    pub trade_id: u64,
+    pub other_user_id: String,
+    pub marker_order_id: String,
 }
 
-struct OrderCreated {
-    executed_quantity: u64,
-    fills: Vec<Fills>,
+pub struct OrderCreated {
+    pub executed_quantity: u64,
+    pub fills: Vec<Fill>,
 }
 
-struct OrderbookDepth {
-    bids: Vec<[String; 2]>,
-    asks: Vec<[String; 2]>,
+pub struct OrderbookDepth {
+    pub bids: Vec<[String; 2]>,
+    pub asks: Vec<[String; 2]>,
 }
 
-enum Side {
+pub enum Side {
     Buy,
     Sell,
 }
@@ -66,10 +66,10 @@ impl Orderbook {
         }
     }
 
-    fn ticker(&self) -> String {
+    pub fn ticker(&self) -> String {
         format!("{}_{}", self.base_asset, self.quote_asset)
     }
-    fn add_order(&mut self, order: &mut Order) -> OrderCreated {
+    pub fn add_order(&mut self, order: &mut Order) -> OrderCreated {
         match order.side.as_str() {
             "buy" => {
                 let ongoing_order = self.match_asks(order);
@@ -94,7 +94,7 @@ impl Orderbook {
     }
 
     fn match_asks(&mut self, order: &mut Order) -> OrderCreated {
-        let mut fills: Vec<Fills> = Vec::new();
+        let mut fills: Vec<Fill> = Vec::new();
         let mut executed_quantity: u64 = 0;
 
         self.asks.sort_by_key(|ask| ask.price);
@@ -109,7 +109,7 @@ impl Orderbook {
                 ask.filled += filled_qty;
                 self.last_trade_id += 1;
 
-                fills.push(Fills {
+                fills.push(Fill {
                     price: ask.price.to_string(),
                     qty: filled_qty,
                     trade_id: self.last_trade_id,
@@ -129,7 +129,7 @@ impl Orderbook {
     }
 
     fn match_bids(&mut self, order: &mut Order) -> OrderCreated {
-        let mut fills: Vec<Fills> = Vec::new();
+        let mut fills: Vec<Fill> = Vec::new();
         let mut executed_qty: u64 = 0;
 
         self.bids.sort_by(|a, b| b.price.cmp(&a.price));
@@ -144,7 +144,7 @@ impl Orderbook {
                 bid.filled += amount_remaining;
                 self.last_trade_id += 1;
 
-                fills.push(Fills {
+                fills.push(Fill {
                     price: bid.price.to_string(),
                     qty: amount_remaining,
                     trade_id: self.last_trade_id,
