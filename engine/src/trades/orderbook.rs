@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashMap;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Order {
     price: u64,
     quantity: u64,
