@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MessageToEngine {
+    #[serde(rename = "type")]
     pub message_type: MessageToType,
     pub data: EngineMessageData,
 }
@@ -19,7 +20,7 @@ pub struct PlaceOrderRequest {
     pub market: String,
     pub price: String,
     pub quantity: String,
-    pub side: String,
+    pub side: Side,
     pub user_id: String,
 }
 
@@ -33,6 +34,13 @@ pub struct CancelOrderRequest {
 pub struct GetOpenOrdersRequest {
     pub user_id: String,
     pub market: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    Buy,
+    Sell,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,6 +66,7 @@ pub enum MessageFromType {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MessageFromOrderbook {
+    #[serde(rename = "type")]
     pub message_type: MessageFromType,
     pub data: OrderbookMessageData,
 }
