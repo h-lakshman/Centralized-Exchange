@@ -1,18 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct MessageToEngine {
-    #[serde(rename = "type")]
-    pub message_type: MessageToType,
-    pub data: EngineMessageData,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum EngineMessageData {
-    PlaceOrder(PlaceOrderRequest),
+#[serde(tag = "type", content = "data")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MessageToEngine {
+    CreateOrder(PlaceOrderRequest),
     CancelOrder(CancelOrderRequest),
-    GetOpenOrders(GetOpenOrdersRequest),
+    OnRamp(OnRampRequest),
     GetDepth(GetDepthRequest),
+    GetOpenOrders(GetOpenOrdersRequest),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,6 +27,18 @@ pub struct CancelOrderRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct OnRampRequest {
+    pub amount: String,
+    pub user_id: String,
+    pub txn_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetDepthRequest {
+    pub market: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GetOpenOrdersRequest {
     pub user_id: String,
     pub market: String,
@@ -43,78 +51,48 @@ pub enum Side {
     Sell,
 }
 
+// Response from orderbook
+
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetDepthRequest {
+#[serde(tag = "type", content = "payload")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MessageFromOrderbook {
+    Depth(DepthPayload),
+    OrderPlaced(OrderPlacedPayload),
+    OrderCancelled(OrderCancelledPayload),
+    OpenOrders(Vec<OpenOrder>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DepthPayload {
     pub market: String,
+    pub bids: Vec<[String; 2]>,
+    pub asks: Vec<[String; 2]>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum MessageToType {
-    PlaceOrder,
-    CancelOrder,
-    GetOpenOrders,
-    GetDepth,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum MessageFromType {
-    Depth,
-    OrderCanceled,
-    OrderPlaced,
-    OpenOrders,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MessageFromOrderbook {
-    #[serde(rename = "type")]
-    pub message_type: MessageFromType,
-    pub data: OrderbookMessageData,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum OrderbookMessageData {
-    Depth(Depth),
-    OrderCanceled(OrderCanceled),
-    OrderPlaced(OrderPlaced),
-    OpenOrders(OpenOrders),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Depth {
-    pub market: String,
-    asks: Vec<String>,
-    bids: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OrderCanceled {
+pub struct OrderPlacedPayload {
     pub order_id: String,
-    pub executed_quantity: u32,
-    pub remaining_quantity: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OrderPlaced {
-    pub order_id: String,
-    pub executed_quantity: u32,
+    pub executed_qty: u32,
     pub fills: Vec<Fill>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OrderCancelledPayload {
+    pub order_id: String,
+    pub executed_qty: u32,
+    pub remaining_qty: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Fill {
     pub price: String,
-    pub quantity: u32,
+    pub qty: u32,
     pub trade_id: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct OpenOrders {
-    pub market: String,
-    pub orders: Vec<Order>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Order {
+pub struct OpenOrder {
     pub order_id: String,
     pub price: String,
     pub executed_quantity: u32,
