@@ -1,2 +1,5 @@
+mod events;
 mod orderbook;
-use orderbook::*;
+
+pub use events::*;
+pub use orderbook::*;
