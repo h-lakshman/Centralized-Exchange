@@ -6,6 +6,8 @@ use crate::{
 use rust_decimal::Decimal;
 use std::{collections::HashMap, str::FromStr};
 
+pub const BASE_CURRENCY: &str = "INR";
+
 struct ProcessParams {
     message: MessageFromApi,
     client_id: String,
@@ -58,12 +60,82 @@ impl Engine {
                     }
                 }
             }
-            MessageFromApi::CancelOrder(cancel_order_payload) => todo!(),
+            MessageFromApi::CancelOrder(cancel_order_payload) => {
+                let order_id = cancel_order_payload.order_id;
+                let cancel_market = cancel_order_payload.market;
+                let quote_asset = cancel_market.split("_").next().unwrap();
+                let cancel_orderbook = match self
+                    .orderbooks
+                    .iter_mut()
+                    .find(|ob| ob.ticker() == cancel_market)
+                {
+                    Some(ob) => ob,
+                    None => {
+                        eprintln!("Orderbook not found");
+                        return;
+                    }
+                };
+                let order = cancel_orderbook
+                    .asks
+                    .iter()
+                    .find(|o| o.order_id == order_id)
+                    .or_else(|| {
+                        cancel_orderbook
+                            .bids
+                            .iter()
+                            .find(|o| o.order_id == order_id)
+                    })
+                    .cloned();
+
+                let order = match order {
+                    Some(o) => o,
+                    None => {
+                        eprintln!("Order to be cancelled was not found");
+                        return;
+                    }
+                };
+
+                match order.side {
+                    Side::Buy => {
+                        if let Some(price) = cancel_orderbook.cancel_bid(&order.clone()) {
+                            let left_quantity = (order.quantity - order.filled) * order.price;
+                            let balance = self.balances.get_mut(&order.user_id).unwrap();
+                            balance.get_mut(BASE_CURRENCY).unwrap().available +=
+                                Decimal::from_str(&left_quantity.to_string()).unwrap();
+                            balance.get_mut(BASE_CURRENCY).unwrap().locked -=
+                                Decimal::from_str(&left_quantity.to_string()).unwrap();
+
+                            // self.send_updated_depth_at(price, cancel_market);
+                        }
+                    }
+                    Side::Sell => {
+                        if let Some(price) = cancel_orderbook.cancel_ask(&order.clone()) {
+                            let left_quantity = order.quantity - order.filled;
+                            let balance = self.balances.get_mut(&order.user_id).unwrap();
+                            balance.get_mut(quote_asset).unwrap().available +=
+                                Decimal::from_str(&left_quantity.to_string()).unwrap();
+                            balance.get_mut(quote_asset).unwrap().locked -=
+                                Decimal::from_str(&left_quantity.to_string()).unwrap();
+
+                            // self.send_updated_depth_at(price, cancel_market);
+                        }
+                    }
+                }
+                let _ = RedisManager::get_instance().send_to_api(
+                    params.client_id,
+                    MessageToApi::OrderCancelled(OrderCancelledPayload {
+                        order_id,
+                        executed_qty: 0,
+                        remaining_qty: 0,
+                    }),
+                );
+            }
             MessageFromApi::GetDepth(get_depth_payload) => todo!(),
             MessageFromApi::GetOpenOrders(get_open_orders_payload) => todo!(),
             MessageFromApi::OnRamp(on_ramp_payload) => todo!(),
         }
     }
+
     fn create_order(
         &mut self,
         market: &str,
@@ -87,7 +159,7 @@ impl Engine {
             quantity: quantity.parse().unwrap(),
             order_id: self.get_random_id(),
             filled: 0,
-            side: side.as_str().to_string(),
+            side: side.clone(),
             user_id: user_id.to_string(),
         };
 
@@ -134,46 +206,49 @@ impl Engine {
         fills: &Vec<Fill>,
         executed_quantity: u64,
     ) {
-        if side.as_str() == Side::Buy.as_str() {
-            fills.iter().for_each(|fill| {
-                //update quote balance
-                let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                other_user.get_mut(quote_asset).unwrap().available -=
-                    Decimal::from_str(&fill.price).unwrap()
-                        * Decimal::from_str(&fill.qty.to_string()).unwrap();
-                let currrent_user = self.balances.get_mut(user_id).unwrap();
-                currrent_user.get_mut(quote_asset).unwrap().locked +=
-                    Decimal::from_str(&fill.price).unwrap()
-                        * Decimal::from_str(&fill.qty.to_string()).unwrap();
+        match side {
+            Side::Buy => {
+                fills.iter().for_each(|fill| {
+                    //update quote balance
+                    let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
+                    other_user.get_mut(quote_asset).unwrap().available -=
+                        Decimal::from_str(&fill.price).unwrap()
+                            * Decimal::from_str(&fill.qty.to_string()).unwrap();
+                    let currrent_user = self.balances.get_mut(user_id).unwrap();
+                    currrent_user.get_mut(quote_asset).unwrap().locked +=
+                        Decimal::from_str(&fill.price).unwrap()
+                            * Decimal::from_str(&fill.qty.to_string()).unwrap();
 
-                //update base balance
-                let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                other_user.get_mut(base_asset).unwrap().locked -=
-                    Decimal::from_str(&fill.qty.to_string()).unwrap();
-                let current_user = self.balances.get_mut(user_id).unwrap();
-                current_user.get_mut(base_asset).unwrap().locked +=
-                    Decimal::from_str(&fill.qty.to_string()).unwrap();
-            })
-        } else {
-            fills.iter().for_each(|fill| {
-                //update quote balance
-                let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                other_user.get_mut(quote_asset).unwrap().locked -=
-                    Decimal::from_str(&fill.qty.to_string()).unwrap()
-                        * Decimal::from_str(&fill.price).unwrap();
-                let current_user = self.balances.get_mut(user_id).unwrap();
-                current_user.get_mut(quote_asset).unwrap().available +=
-                    Decimal::from_str(&fill.qty.to_string()).unwrap()
-                        * Decimal::from_str(&fill.price).unwrap();
+                    //update base balance
+                    let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
+                    other_user.get_mut(base_asset).unwrap().locked -=
+                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                    let current_user = self.balances.get_mut(user_id).unwrap();
+                    current_user.get_mut(base_asset).unwrap().locked +=
+                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                });
+            }
+            Side::Sell => {
+                fills.iter().for_each(|fill| {
+                    //update quote balance
+                    let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
+                    other_user.get_mut(quote_asset).unwrap().locked -=
+                        Decimal::from_str(&fill.qty.to_string()).unwrap()
+                            * Decimal::from_str(&fill.price).unwrap();
+                    let current_user = self.balances.get_mut(user_id).unwrap();
+                    current_user.get_mut(quote_asset).unwrap().available +=
+                        Decimal::from_str(&fill.qty.to_string()).unwrap()
+                            * Decimal::from_str(&fill.price).unwrap();
 
-                //update base asset
-                let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                other_user.get_mut(base_asset).unwrap().available +=
-                    Decimal::from_str(&fill.qty.to_string()).unwrap();
-                let current_user = self.balances.get_mut(user_id).unwrap();
-                current_user.get_mut(base_asset).unwrap().locked -=
-                    Decimal::from_str(&fill.qty.to_string()).unwrap();
-            })
+                    //update base asset
+                    let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
+                    other_user.get_mut(base_asset).unwrap().available +=
+                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                    let current_user = self.balances.get_mut(user_id).unwrap();
+                    current_user.get_mut(base_asset).unwrap().locked -=
+                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                });
+            }
         }
     }
 
@@ -223,6 +298,10 @@ impl Engine {
                 Ok(())
             }
         }
+    }
+
+    fn send_updated_depth_at(&self, price: &str, market: &str) {
+        let a = 1;
     }
 
     pub fn get_random_id(&self) -> String {

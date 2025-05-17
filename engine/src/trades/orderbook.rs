@@ -2,13 +2,17 @@ use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashMap;
 
+use crate::types::Side;
+
+use super::BASE_CURRENCY;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Order {
     pub price: u64,
     pub quantity: u64,
     pub order_id: String,
     pub filled: u64,
-    pub side: String,
+    pub side: Side,
     pub user_id: String,
 }
 
@@ -30,19 +34,13 @@ pub struct OrderbookDepth {
     pub asks: Vec<[String; 2]>,
 }
 
-pub enum Side {
-    Buy,
-    Sell,
-}
-
 pub struct Orderbook {
-    bids: Vec<Order>,
-    asks: Vec<Order>,
-    base_asset: String,
-    //Todo: set quote_asset to base currency from engine
-    quote_asset: String,
-    last_trade_id: u64,
-    current_price: u64,
+    pub bids: Vec<Order>,
+    pub asks: Vec<Order>,
+    pub base_asset: String,
+    pub quote_asset: String,
+    pub last_trade_id: u64,
+    pub current_price: u64,
 }
 
 //add self trade protection
@@ -59,8 +57,7 @@ impl Orderbook {
             bids,
             asks,
             base_asset,
-            //Todo: set quote_asset to base currency from engine,this is a temp fix
-            quote_asset: "USD".to_string(),
+            quote_asset: BASE_CURRENCY.to_string(),
             last_trade_id: last_trade_id.unwrap_or(0),
             current_price: current_price.unwrap_or(0),
         }
@@ -70,8 +67,8 @@ impl Orderbook {
         format!("{}_{}", self.base_asset, self.quote_asset)
     }
     pub fn add_order(&mut self, order: &mut Order) -> OrderCreated {
-        match order.side.as_str() {
-            "buy" => {
+        match order.side {
+            Side::Buy => {
                 let ongoing_order = self.match_asks(order);
                 order.filled = ongoing_order.executed_quantity;
                 if ongoing_order.executed_quantity == order.quantity {
@@ -80,7 +77,7 @@ impl Orderbook {
                 self.bids.push(order.clone());
                 return ongoing_order;
             }
-            "sell" => {
+            Side::Sell => {
                 let ongoing_order = self.match_bids(order);
                 order.filled = ongoing_order.executed_quantity;
                 if ongoing_order.executed_quantity == order.quantity {
@@ -89,7 +86,7 @@ impl Orderbook {
                 self.asks.push(order.clone());
                 return ongoing_order;
             }
-            _ => panic!("Invalid order side: {}", order.side),
+            _ => panic!("Invalid order side: {}", order.side.as_str()),
         }
     }
 
@@ -162,7 +159,7 @@ impl Orderbook {
     }
 
     //make this faster ,compute this during order matching
-    fn get_depth(&self) -> OrderbookDepth {
+    pub fn get_depth(&self) -> OrderbookDepth {
         let mut bids: Vec<[String; 2]> = Vec::new();
         let mut asks: Vec<[String; 2]> = Vec::new();
 
@@ -187,29 +184,30 @@ impl Orderbook {
         OrderbookDepth { bids, asks }
     }
 
-    fn cancel_bid(&mut self, order: Order) -> u64 {
+    pub fn cancel_bid(&mut self, order: &Order) -> Option<u64> {
         let index = self
             .bids
             .iter()
             .position(|bid| bid.order_id == order.order_id);
         if let Some(index) = index {
+            let price: u64 = self.bids[index].price;
             self.bids.remove(index);
-            return order.price;
+            return Some(price);
         }
-        return 0;
+        return None;
     }
 
-    fn cancel_ask(&mut self, order: Order) -> u64 {
+    pub fn cancel_ask(&mut self, order: &Order) -> Option<u64> {
         let index = self
             .asks
             .iter()
             .position(|ask| ask.order_id == order.order_id);
         if let Some(index) = index {
-            let price = self.asks[index].price;
+            let price: u64 = self.asks[index].price;
             self.asks.remove(index);
-            return price;
+            return Some(price);
         }
-        return 0;
+        return None;
     }
 
     fn get_open_orders(&self, user_id: String) -> Vec<Order> {
