@@ -69,7 +69,7 @@ pub struct CreateOrderPayload {
 #[derive(Serialize, Deserialize)]
 pub struct CancelOrderPayload {
     pub order_id: String,
-    pub user_id: String,
+    pub market: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -90,7 +90,7 @@ pub struct OnRampPayload {
     pub txn_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
     Buy,
