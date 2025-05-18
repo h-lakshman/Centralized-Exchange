@@ -1,7 +1,7 @@
-use super::{Fill, Order, Orderbook};
+use super::{Orderbook, OrderbookFill};
 use crate::{
     redis_manager::RedisManager,
-    types::{MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, Side},
+    types::{MessageFromApi, MessageToApi, Order, OrderCancelledPayload, OrderPlacedPayload, Side},
 };
 use rust_decimal::Decimal;
 use std::{collections::HashMap, str::FromStr};
@@ -45,18 +45,25 @@ impl Engine {
                 let redis: &'static RedisManager = RedisManager::get_instance();
                 match result {
                     Ok(order) => {
-                        let _ = redis.send_to_api(params.client_id.clone(), order);
+                        if let Err(e) = redis.send_to_api(params.client_id.clone(), order) {
+                            eprintln!("Failed to send order placed message to Redis: {:?}", e);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Create order error: {:?}", e);
-                        let _ = redis.send_to_api(
+                        if let Err(redis_err) = redis.send_to_api(
                             params.client_id.clone(),
                             MessageToApi::OrderCancelled(OrderCancelledPayload {
                                 order_id: "".to_string(),
                                 executed_qty: 0,
                                 remaining_qty: 0,
                             }),
-                        );
+                        ) {
+                            eprintln!(
+                                "Failed to send order cancelled message to Redis: {:?}",
+                                redis_err
+                            );
+                        }
                     }
                 }
             }
@@ -121,18 +128,58 @@ impl Engine {
                         }
                     }
                 }
-                let _ = RedisManager::get_instance().send_to_api(
+                if let Err(e) = RedisManager::get_instance().send_to_api(
                     params.client_id,
                     MessageToApi::OrderCancelled(OrderCancelledPayload {
                         order_id,
                         executed_qty: 0,
                         remaining_qty: 0,
                     }),
-                );
+                ) {
+                    eprintln!("Failed to send order cancelled message to Redis: {:?}", e);
+                }
             }
-            MessageFromApi::GetDepth(get_depth_payload) => todo!(),
-            MessageFromApi::GetOpenOrders(get_open_orders_payload) => todo!(),
-            MessageFromApi::OnRamp(on_ramp_payload) => todo!(),
+            MessageFromApi::GetOpenOrders(get_open_orders_payload) => {
+                match self
+                    .orderbooks
+                    .iter()
+                    .find(|ob| ob.ticker() == get_open_orders_payload.market)
+                {
+                    Some(open_order_book) => {
+                        let open_orders =
+                            open_order_book.get_open_orders(get_open_orders_payload.user_id);
+                        if let Err(e) = RedisManager::get_instance()
+                            .send_to_api(params.client_id, MessageToApi::OpenOrders(open_orders))
+                        {
+                            eprintln!("Failed to send open orders message to Redis: {:?}", e);
+                        }
+                    }
+                    None => {
+                        eprint!("No orderbook found");
+                        return;
+                    }
+                }
+            }
+            MessageFromApi::GetDepth(get_depth_payload) => {
+                let market = get_depth_payload.market;
+                match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
+                    Some(orderbook) => {
+                        if let Err(e) = RedisManager::get_instance().send_to_api(
+                            params.client_id,
+                            MessageToApi::Depth(orderbook.get_depth()),
+                        ) {
+                            eprintln!("Failed to send depth message to Redis: {:?}", e);
+                        }
+                    }
+                    None => {}
+                }
+            }
+            MessageFromApi::OnRamp(on_ramp_payload) => {
+                let user_id = on_ramp_payload.user_id;
+                let amount = Decimal::from_str(&on_ramp_payload.amount)
+                    .expect("Failed to parse amount to Decimal");
+                self.on_ramp(&user_id, amount);
+            }
         }
     }
 
@@ -185,16 +232,12 @@ impl Engine {
                 .fills
                 .iter()
                 .map(|fill| crate::types::Fill {
-                    price: fill.price.clone(),
-                    qty: fill.qty,
-                    trade_id: fill.trade_id,
+                    price: fill.fill.price.clone(),
+                    qty: fill.fill.qty,
+                    trade_id: fill.fill.trade_id,
                 })
                 .collect(),
         }))
-    }
-
-    fn cancel_order(&self) {
-        let a = 1;
     }
 
     fn update_balances(
@@ -203,7 +246,7 @@ impl Engine {
         base_asset: &str,
         quote_asset: &str,
         side: &Side,
-        fills: &Vec<Fill>,
+        fills: &Vec<OrderbookFill>,
         executed_quantity: u64,
     ) {
         match side {
@@ -212,20 +255,20 @@ impl Engine {
                     //update quote balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
                     other_user.get_mut(quote_asset).unwrap().available -=
-                        Decimal::from_str(&fill.price).unwrap()
-                            * Decimal::from_str(&fill.qty.to_string()).unwrap();
+                        Decimal::from_str(&fill.fill.price).unwrap()
+                            * Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
                     let currrent_user = self.balances.get_mut(user_id).unwrap();
                     currrent_user.get_mut(quote_asset).unwrap().locked +=
-                        Decimal::from_str(&fill.price).unwrap()
-                            * Decimal::from_str(&fill.qty.to_string()).unwrap();
+                        Decimal::from_str(&fill.fill.price).unwrap()
+                            * Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
 
                     //update base balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
                     other_user.get_mut(base_asset).unwrap().locked -=
-                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
                     let current_user = self.balances.get_mut(user_id).unwrap();
                     current_user.get_mut(base_asset).unwrap().locked +=
-                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
                 });
             }
             Side::Sell => {
@@ -233,21 +276,50 @@ impl Engine {
                     //update quote balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
                     other_user.get_mut(quote_asset).unwrap().locked -=
-                        Decimal::from_str(&fill.qty.to_string()).unwrap()
-                            * Decimal::from_str(&fill.price).unwrap();
+                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap()
+                            * Decimal::from_str(&fill.fill.price).unwrap();
                     let current_user = self.balances.get_mut(user_id).unwrap();
                     current_user.get_mut(quote_asset).unwrap().available +=
-                        Decimal::from_str(&fill.qty.to_string()).unwrap()
-                            * Decimal::from_str(&fill.price).unwrap();
+                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap()
+                            * Decimal::from_str(&fill.fill.price).unwrap();
 
                     //update base asset
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
                     other_user.get_mut(base_asset).unwrap().available +=
-                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
                     let current_user = self.balances.get_mut(user_id).unwrap();
                     current_user.get_mut(base_asset).unwrap().locked -=
-                        Decimal::from_str(&fill.qty.to_string()).unwrap();
+                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
                 });
+            }
+        }
+    }
+
+    fn on_ramp(&mut self, user_id: &str, amount: Decimal) {
+        match self.balances.get_mut(user_id) {
+            Some(user_balance) => {
+                if let Some(base_balance) = user_balance.get_mut(BASE_CURRENCY) {
+                    base_balance.available += amount;
+                } else {
+                    user_balance.insert(
+                        BASE_CURRENCY.to_string(),
+                        Balance {
+                            available: amount,
+                            locked: Decimal::from(0),
+                        },
+                    );
+                }
+            }
+            None => {
+                let mut new_balance = UserBalance::new();
+                new_balance.insert(
+                    BASE_CURRENCY.to_string(),
+                    Balance {
+                        available: amount,
+                        locked: Decimal::from(0),
+                    },
+                );
+                self.balances.insert(user_id.to_string(), new_balance);
             }
         }
     }
@@ -301,7 +373,51 @@ impl Engine {
     }
 
     fn send_updated_depth_at(&self, price: &str, market: &str) {
-        let a = 1;
+        //code gen by ai,it is wrong
+        let orderbook = match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
+            Some(orderbook) => orderbook,
+            None => return,
+        };
+
+        let depth = orderbook.get_depth();
+
+        let updated_bids: Vec<Vec<String>> = depth
+            .bids
+            .iter()
+            .filter(|x| x.get(0).map_or(false, |p| p == price))
+            .map(|x| x.to_vec())
+            .collect();
+
+        let updated_asks: Vec<Vec<String>> = depth
+            .asks
+            .iter()
+            .filter(|x| x.get(0).map_or(false, |p| p == price))
+            .map(|x| x.to_vec())
+            .collect();
+
+        let bids: Vec<Vec<String>> = if !updated_bids.is_empty() {
+            updated_bids
+        } else {
+            vec![vec![price.to_string(), "0".to_string()]]
+        };
+
+        let asks = if !updated_asks.is_empty() {
+            updated_asks
+        } else {
+            vec![vec![price.to_string(), "0".to_string()]]
+        };
+
+        // RedisManager::get_instance().publish_message(
+        //     &format!("depth@{}", market),
+        //     serde_json::json!({
+        //         "stream": format!("depth@{}", market),
+        //         "data": {
+        //             "a": asks,
+        //             "b": bids,
+        //             "e": "depth"
+        //         }
+        //     }),
+        // );
     }
 
     pub fn get_random_id(&self) -> String {

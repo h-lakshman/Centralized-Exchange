@@ -2,36 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashMap;
 
-use crate::types::Side;
+use crate::types::{DepthPayload, Fill, Order, Side};
 
 use super::BASE_CURRENCY;
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Order {
-    pub price: u64,
-    pub quantity: u64,
-    pub order_id: String,
-    pub filled: u64,
-    pub side: Side,
-    pub user_id: String,
-}
-
-pub struct Fill {
-    pub price: String,
-    pub qty: u64,
-    pub trade_id: u64,
+// Extended Fill struct with additional fields needed for orderbook
+pub struct OrderbookFill {
+    pub fill: Fill,
     pub other_user_id: String,
     pub marker_order_id: String,
 }
 
 pub struct OrderCreated {
     pub executed_quantity: u64,
-    pub fills: Vec<Fill>,
-}
-
-pub struct OrderbookDepth {
-    pub bids: Vec<[String; 2]>,
-    pub asks: Vec<[String; 2]>,
+    pub fills: Vec<OrderbookFill>,
 }
 
 pub struct Orderbook {
@@ -91,7 +75,7 @@ impl Orderbook {
     }
 
     fn match_asks(&mut self, order: &mut Order) -> OrderCreated {
-        let mut fills: Vec<Fill> = Vec::new();
+        let mut fills: Vec<OrderbookFill> = Vec::new();
         let mut executed_quantity: u64 = 0;
 
         self.asks.sort_by_key(|ask| ask.price);
@@ -106,10 +90,12 @@ impl Orderbook {
                 ask.filled += filled_qty;
                 self.last_trade_id += 1;
 
-                fills.push(Fill {
-                    price: ask.price.to_string(),
-                    qty: filled_qty,
-                    trade_id: self.last_trade_id,
+                fills.push(OrderbookFill {
+                    fill: Fill {
+                        price: ask.price.to_string(),
+                        qty: filled_qty,
+                        trade_id: self.last_trade_id,
+                    },
                     other_user_id: ask.user_id.clone(),
                     marker_order_id: order.order_id.clone(),
                 });
@@ -126,7 +112,7 @@ impl Orderbook {
     }
 
     fn match_bids(&mut self, order: &mut Order) -> OrderCreated {
-        let mut fills: Vec<Fill> = Vec::new();
+        let mut fills: Vec<OrderbookFill> = Vec::new();
         let mut executed_qty: u64 = 0;
 
         self.bids.sort_by(|a, b| b.price.cmp(&a.price));
@@ -141,10 +127,12 @@ impl Orderbook {
                 bid.filled += amount_remaining;
                 self.last_trade_id += 1;
 
-                fills.push(Fill {
-                    price: bid.price.to_string(),
-                    qty: amount_remaining,
-                    trade_id: self.last_trade_id,
+                fills.push(OrderbookFill {
+                    fill: Fill {
+                        price: bid.price.to_string(),
+                        qty: amount_remaining,
+                        trade_id: self.last_trade_id,
+                    },
                     other_user_id: bid.user_id.clone(),
                     marker_order_id: bid.order_id.clone(),
                 });
@@ -159,7 +147,7 @@ impl Orderbook {
     }
 
     //make this faster ,compute this during order matching
-    pub fn get_depth(&self) -> OrderbookDepth {
+    pub fn get_depth(&self) -> DepthPayload {
         let mut bids: Vec<[String; 2]> = Vec::new();
         let mut asks: Vec<[String; 2]> = Vec::new();
 
@@ -181,7 +169,7 @@ impl Orderbook {
         for (price, qty) in asks_map {
             asks.push([price, qty.to_string()]);
         }
-        OrderbookDepth { bids, asks }
+        DepthPayload { bids, asks }
     }
 
     pub fn cancel_bid(&mut self, order: &Order) -> Option<u64> {
@@ -210,7 +198,7 @@ impl Orderbook {
         return None;
     }
 
-    fn get_open_orders(&self, user_id: String) -> Vec<Order> {
+    pub fn get_open_orders(&self, user_id: String) -> Vec<Order> {
         self.bids
             .iter()
             .chain(self.asks.iter())

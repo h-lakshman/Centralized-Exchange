@@ -77,4 +77,15 @@ impl RedisManager {
         let _: () = connection.publish(channel, payload)?;
         Ok(())
     }
+    //implement ws logic
+    // pub fn publish_message(
+    //     &self,
+    //     channel: String,
+    //     message: WsMessage,
+    // ) -> Result<(), Box<dyn Error>> {
+    //     let mut connection = self.client.get_connection()?;
+    //     let payload = serde_json::to_string(&message)?;
+    //     let _ = connection.publish(channel, message)?;
+    //     Ok(())
+    // }
 }

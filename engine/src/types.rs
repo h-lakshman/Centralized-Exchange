@@ -1,4 +1,3 @@
-use crate::trades::Order;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -6,6 +5,16 @@ use serde::{Deserialize, Serialize};
 pub enum DbMessageType {
     TradeAdded,
     OrderCreated,
+}
+#[derive(Serialize, Deserialize, Clone)]
+
+pub struct Order {
+    pub price: u64,
+    pub quantity: u64,
+    pub order_id: String,
+    pub filled: u64,
+    pub side: Side,
+    pub user_id: String,
 }
 
 //Send To Api
@@ -85,7 +94,7 @@ pub struct GetOpenOrdersPayload {
 
 #[derive(Serialize, Deserialize)]
 pub struct OnRampPayload {
-    pub market: String,
+    pub amount: String,
     pub user_id: String,
     pub txn_id: String,
 }
