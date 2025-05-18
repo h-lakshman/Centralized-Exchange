@@ -183,6 +183,10 @@ impl Engine {
         }
     }
 
+    fn add_orderbook(&mut self,orderbook:Orderbook){
+        self.orderbooks.push(orderbook);
+    }
+
     fn create_order(
         &mut self,
         market: &str,

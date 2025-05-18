@@ -13,3 +13,4 @@ tokio = { version = "1.0", features = ["full"] }
 rand = "0.8"
 futures-util = "0.3"
 dotenv = "0.15"
+engine = { path = "../engine" }
