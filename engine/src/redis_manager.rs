@@ -1,50 +1,10 @@
-use crate::types::{DbMessageType, MessageToApi};
+use crate::types::{DbMessage, MessageToApi};
 use redis::{Client, Commands};
-use serde::{Deserialize, Serialize};
 use std::{env, error::Error, sync::OnceLock};
 
-#[derive(Serialize, Deserialize)]
-pub struct DbMessage {
-    #[serde(rename = "type")]
-    db_message_type: DbMessageType,
-    data: DbMessageData,
-}
-
-#[derive(Serialize, Deserialize)]
-enum DbMessageData {
-    TradeAdd(TradeAdd),
-    OrderUpdate(OrderUpdate),
-}
-
-#[derive(Serialize, Deserialize)]
-struct TradeAdd {
-    id: String,
-    is_buyer_maker: bool,
-    price: String,
-    quantity: String,
-    quote_quantity: String,
-    timestamp: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct OrderUpdate {
-    order_id: String,
-    executed_quantity: u64,
-    price: Option<String>,
-    market: Option<String>,
-    quantity: Option<String>,
-    side: Option<Side>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Side {
-    Buy,
-    Sell,
-}
 pub static REDIS_MANAGER: OnceLock<RedisManager> = OnceLock::new();
 pub struct RedisManager {
-    client: Client,
+    pub client: Client,
 }
 
 impl RedisManager {

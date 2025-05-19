@@ -8,9 +8,9 @@ use std::{collections::HashMap, str::FromStr};
 
 pub const BASE_CURRENCY: &str = "INR";
 
-struct ProcessParams {
-    message: MessageFromApi,
-    client_id: String,
+pub struct ProcessParams {
+    pub message: MessageFromApi,
+    pub client_id: String,
 }
 
 type UserBalance = HashMap<String, Balance>;
@@ -19,7 +19,7 @@ struct Balance {
     locked: Decimal,
 }
 
-struct Engine {
+pub struct Engine {
     orderbooks: Vec<Orderbook>,
     balances: HashMap<String, UserBalance>,
 }
@@ -32,7 +32,7 @@ impl Engine {
         }
     }
 
-    fn process(&mut self, params: ProcessParams) {
+    pub fn process(&mut self, params: ProcessParams) {
         match params.message {
             MessageFromApi::CreateOrder(payload) => {
                 let result: Result<MessageToApi, String> = self.create_order(
@@ -183,7 +183,7 @@ impl Engine {
         }
     }
 
-    fn add_orderbook(&mut self,orderbook:Orderbook){
+    fn add_orderbook(&mut self, orderbook: Orderbook) {
         self.orderbooks.push(orderbook);
     }
 

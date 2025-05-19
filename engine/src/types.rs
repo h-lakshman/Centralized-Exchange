@@ -6,8 +6,42 @@ pub enum DbMessageType {
     TradeAdded,
     OrderCreated,
 }
-#[derive(Serialize, Deserialize, Clone)]
 
+//Message to DB
+#[derive(Serialize, Deserialize)]
+pub struct DbMessage {
+    #[serde(rename = "type")]
+    pub db_message_type: DbMessageType,
+    pub data: DbMessageData,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum DbMessageData {
+    TradeAdd(TradeAdd),
+    OrderUpdate(OrderUpdate),
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TradeAdd {
+    pub id: String,
+    pub is_buyer_maker: bool,
+    pub price: String,
+    pub quantity: String,
+    pub quote_quantity: String,
+    pub timestamp: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct OrderUpdate {
+    pub order_id: String,
+    pub executed_quantity: u64,
+    pub price: Option<String>,
+    pub market: Option<String>,
+    pub quantity: Option<String>,
+    pub side: Option<Side>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Order {
     pub price: u64,
     pub quantity: u64,
