@@ -1,14 +1,16 @@
-use futures_util::{stream::SplitStream, StreamExt};
+use futures_util::stream::SplitSink;
+use futures_util::StreamExt;
 use std::{collections::HashMap, sync::Arc};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, OnceCell};
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
 use crate::user::User;
 
 static USER_MANAGER: OnceCell<Arc<Mutex<UserManager>>> = OnceCell::const_new();
 pub struct UserManager {
-    users: HashMap<String, User>,
+    users: HashMap<String, Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>>>,
 }
 
 impl UserManager {
@@ -28,49 +30,21 @@ impl UserManager {
         let (sink, stream) = ws.split();
 
         let user_sender = Arc::new(Mutex::new(sink));
-        let user = User::new(id.clone(), user_sender);
+        let user = User::new(id.clone(), user_sender.clone(), stream);
 
-        self.users.insert(id.clone(), user.clone());
-
-        Self::register_on_close(id.clone(), stream);
-
+        self.users.insert(id, user_sender);
         user
     }
 
-    fn register_on_close(
-        user_id: String,
-        mut websocket_consumer_stream: SplitStream<WebSocketStream<TcpStream>>,
-    ) {
-        tokio::spawn(async move {
-            while let Some(message_result) = websocket_consumer_stream.next().await {
-                if let Err(e) = message_result {
-                    eprintln!(
-                        "Error on WebSocket stream for user {}: {}. Assuming disconnection.",
-                        user_id, e
-                    );
-                    break;
-                }
-            }
+    pub async fn remove_user(&mut self, id: &str) {
+        self.users.remove(id);
+    }
 
-            println!("Connection closed for user {}. Cleaning up.", user_id);
-
-            let user_manager = UserManager::get_instance().await;
-            let mut manager_guard = user_manager.lock().await;
-            if manager_guard.users.remove(&user_id).is_some() {
-                println!("User {} removed from UserManager.", user_id);
-                // TODO: Notify SubscriptionManager about user leaving
-            } else {
-                println!(
-                    "User {} not found for removal or already removed from UserManager.",
-                    user_id
-                );
-            }
-
-            println!(
-                "Placeholder: SubscriptionManager notified about user {} leaving.",
-                user_id
-            );
-        });
+    pub async fn get_user(
+        &self,
+        id: &str,
+    ) -> Option<Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>>> {
+        self.users.get(id).cloned()
     }
 
     pub fn get_random_client_id(&self) -> String {

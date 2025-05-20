@@ -1,3 +1,5 @@
+mod subscription_manager;
+mod types;
 mod user;
 mod user_manager;
 
