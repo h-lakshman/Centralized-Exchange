@@ -33,10 +33,6 @@ impl User {
         user
     }
 
-    pub fn get_id(&self) -> &str {
-        &self.id
-    }
-
     pub async fn subscribe(&self, subscription: String) {
         let mut subs = self.subscriptions.lock().await;
         subs.push(subscription);
@@ -82,7 +78,7 @@ impl User {
                 }
             }
 
-            // Connection closed - cleanup
+            // Connection closed
             println!("Connection closed for user {}. Cleaning up.", id);
             let user_manager = UserManager::get_instance().await;
             let mut manager_guard = user_manager.lock().await;

@@ -14,7 +14,7 @@ pub struct IncomingMessage {
     pub params: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OutgoingMessage {
     pub method: String,
     pub data: serde_json::Value,

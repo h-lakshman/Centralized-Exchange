@@ -21,8 +21,7 @@ async fn handle_connection(stream: TcpStream) {
         Ok(ws_stream) => {
             let user_manager = UserManager::get_instance().await;
             let mut manager_guard = user_manager.lock().await;
-            let _user = manager_guard.add_user(ws_stream).await;
-            println!("User {} connected.", _user.get_id());
+            manager_guard.add_user(ws_stream).await;
         }
         Err(e) => {
             println!("Error accepting connection: {}", e);
