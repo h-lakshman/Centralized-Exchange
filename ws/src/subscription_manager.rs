@@ -43,12 +43,12 @@ impl SubscriptionManager {
 
     pub async fn subscribe(
         &mut self,
-        user_id: &str,
+        user_id: String,
         subcsription: String,
     ) -> Result<(), RedisError> {
         let user_already_subscribed = self
             .subscriptions
-            .get(user_id)
+            .get(&user_id)
             .map(|subscriptions| subscriptions.contains(&subcsription))
             .unwrap_or(false);
 
@@ -59,10 +59,10 @@ impl SubscriptionManager {
         self.subscriptions
             .entry(user_id.to_string())
             .or_default()
-            .push(subcsription.clone());
+            .push(subcsription.to_string());
 
         self.reverse_subscriptions
-            .entry(subcsription.clone())
+            .entry(subcsription.to_string())
             .or_default()
             .push(user_id.to_string());
 
@@ -73,17 +73,17 @@ impl SubscriptionManager {
     }
     pub async fn unsubscribe(
         &mut self,
-        user_id: &str,
-        subcsription: &str,
+        user_id: String,
+        subcsription: String,
     ) -> Result<(), RedisError> {
-        if let Some(subscriptions) = self.subscriptions.get_mut(user_id) {
-            subscriptions.retain(|s| s != subcsription);
+        if let Some(subscriptions) = self.subscriptions.get_mut(&user_id) {
+            subscriptions.retain(|s| s != &subcsription);
         }
 
-        if let Some(subscribers) = self.reverse_subscriptions.get_mut(subcsription) {
-            subscribers.retain(|s| s != user_id);
+        if let Some(subscribers) = self.reverse_subscriptions.get_mut(&subcsription) {
+            subscribers.retain(|s| s != &user_id);
             if subscribers.is_empty() {
-                self.reverse_subscriptions.remove(subcsription);
+                self.reverse_subscriptions.remove(&subcsription);
                 self.pubsub.unsubscribe(subcsription).await?;
             }
         }
@@ -97,11 +97,11 @@ impl SubscriptionManager {
             .clone()
     }
 
-    pub async fn user_left(&mut self, user_id: &str) -> Result<(), RedisError> {
+    pub async fn user_left(&mut self, user_id: String) -> Result<(), RedisError> {
         println!("User {} left", user_id);
-        let subscriptions = self.get_subscribers(user_id);
+        let subscriptions = self.get_subscribers(&user_id);
         for subscription in subscriptions {
-            self.unsubscribe(user_id, &subscription).await?;
+            self.unsubscribe(user_id.clone(), subscription).await?;
         }
 
         Ok(())

@@ -53,19 +53,36 @@ impl User {
     fn add_listeners(&mut self) {
         let id = self.id.clone();
         let mut stream = self.stream.take().unwrap();
-        let subscriptions = self.subscriptions.clone();
 
         tokio::spawn(async move {
             while let Some(message) = stream.next().await {
                 match message {
                     Ok(Message::Text(text)) => {
                         if let Ok(parsed_message) = serde_json::from_str::<IncomingMessage>(&text) {
+                            let sub_manager = SubscriptionManager::get_instance().await;
+                            let mut sub_guard = sub_manager.lock().await;
                             match parsed_message.method {
                                 Method::Subscribe => {
-                                    todo!()
+                                    for s in parsed_message.params {
+                                        let res =
+                                            sub_guard.subscribe(id.clone(), s.to_string()).await;
+                                        if let Err(e) = res {
+                                            eprintln!("Error subscribing to {}: {}", s, e);
+                                        }
+                                    }
                                 }
                                 Method::Unsubscribe => {
-                                    todo!()
+                                    for s in parsed_message.params.clone() {
+                                        let res = sub_guard
+                                            .unsubscribe(
+                                                id.clone(),
+                                                parsed_message.params[0].clone(),
+                                            )
+                                            .await;
+                                        if let Err(e) = res {
+                                            eprintln!("Error unsubscribing from {}: {}", s, e);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -82,8 +99,14 @@ impl User {
             println!("Connection closed for user {}. Cleaning up.", id);
             let user_manager = UserManager::get_instance().await;
             let mut manager_guard = user_manager.lock().await;
-            manager_guard.remove_user(&id).await;
+            manager_guard.users.remove(&id);
             println!("User {} removed from UserManager.", id);
+            let sub_manager = SubscriptionManager::get_instance().await;
+            let mut sub_guard = sub_manager.lock().await;
+            let res = sub_guard.user_left(id.clone()).await;
+            if let Err(e) = res {
+                eprintln!("Error removing user from subscription manager: {}", e);
+            }
         });
     }
 }

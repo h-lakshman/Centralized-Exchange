@@ -8,7 +8,7 @@ use crate::user::User;
 
 static USER_MANAGER: OnceCell<Arc<Mutex<UserManager>>> = OnceCell::const_new();
 pub struct UserManager {
-    users: HashMap<String, Arc<Mutex<User>>>,
+    pub users: HashMap<String, Arc<Mutex<User>>>,
 }
 
 impl UserManager {
@@ -31,10 +31,6 @@ impl UserManager {
         let user = User::new(id.clone(), user_sender.clone(), stream);
 
         self.users.insert(id, Arc::new(Mutex::new(user)));
-    }
-
-    pub async fn remove_user(&mut self, id: &str) {
-        self.users.remove(id);
     }
 
     pub async fn get_user(&self, id: &str) -> Option<Arc<Mutex<User>>> {
