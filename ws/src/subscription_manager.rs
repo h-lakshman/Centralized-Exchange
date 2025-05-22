@@ -1,6 +1,5 @@
-use redis::Msg;
+use futures_util::StreamExt;
 use redis::{aio::PubSub, Client, RedisError};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
@@ -34,9 +33,47 @@ impl SubscriptionManager {
         }
     }
 
+    async fn run_redis_listener(instance_arc: Arc<Mutex<Self>>) {
+        loop {
+            let msg_result = {
+                let mut guard = instance_arc.lock().await;
+                let mut message_stream = guard.pubsub.on_message();
+                message_stream.next().await
+            };
+
+            match msg_result {
+                Some(redis_msg) => {
+                    let channel_str: &str = redis_msg.get_channel_name();
+                    let channel: String = channel_str.to_string();
+
+                    let payload_result: redis::RedisResult<String> = redis_msg.get_payload();
+                    let payload: String = match payload_result {
+                        Ok(p) => p,
+                        Err(e) => {
+                            eprintln!("Error getting payload from Redis message on channel '{}': {}. Skipping.", channel, e);
+                            continue;
+                        }
+                    };
+
+                    let mut guard = instance_arc.lock().await;
+                    guard.redis_callback_handler(channel, payload).await;
+                }
+                None => {
+                    eprintln!("Redis PubSub stream ended. Attempting to re-establish stream in the next iteration.");
+                }
+            }
+        }
+    }
+
     pub async fn get_instance() -> Arc<Mutex<SubscriptionManager>> {
         SUBSCRIPTION_MANAGER
-            .get_or_init(|| async { Arc::new(Mutex::new(SubscriptionManager::init().await)) })
+            .get_or_init(|| async {
+                let manager = SubscriptionManager::init().await;
+                let manager_arc = Arc::new(Mutex::new(manager));
+                tokio::spawn(Self::run_redis_listener(manager_arc.clone()));
+
+                manager_arc
+            })
             .await
             .clone()
     }
@@ -107,15 +144,29 @@ impl SubscriptionManager {
         Ok(())
     }
     async fn redis_callback_handler(&mut self, channel: String, msg: String) {
-        let parsed_msg = serde_json::from_str::<OutgoingMessage>(&msg).unwrap();
-        if let Some(subscribers) = self.reverse_subscriptions.get(&channel) {
-            for subscriber in subscribers {
-                let user_manager = UserManager::get_instance().await;
-                let manager_guard = user_manager.lock().await;
-                let user = manager_guard.get_user(subscriber).await;
-                if let Some(user) = user {
-                    user.lock().await.emit(parsed_msg.clone()).await.unwrap();
+        match serde_json::from_str::<OutgoingMessage>(&msg) {
+            Ok(parsed_msg) => {
+                if let Some(subscribers) = self.reverse_subscriptions.get(&channel) {
+                    for subscriber_id in subscribers {
+                        let user_manager = UserManager::get_instance().await;
+                        let manager_guard = user_manager.lock().await;
+                        if let Some(user_arc) = manager_guard.get_user(subscriber_id).await {
+                            let user_guard = user_arc.lock().await;
+                            if let Err(e) = user_guard.emit(parsed_msg.clone()).await {
+                                eprintln!(
+                                    "Error emitting message to user {}: {}",
+                                    subscriber_id, e
+                                );
+                            }
+                        }
+                    }
                 }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Error parsing OutgoingMessage from Redis on channel {}: {}. Message: {}",
+                    channel, e, msg
+                );
             }
         }
     }
