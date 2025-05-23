@@ -42,7 +42,7 @@ impl Engine {
                     &payload.side,
                     &payload.user_id,
                 );
-                let redis: &'static RedisManager = RedisManager::get_instance();
+                let redis = RedisManager::get_instance();
                 match result {
                     Ok(order) => {
                         if let Err(e) = redis.send_to_api(params.client_id.clone(), order) {

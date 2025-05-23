@@ -148,3 +148,54 @@ impl Side {
         }
     }
 }
+
+//msg to ws
+#[derive(Serialize, Deserialize)]
+pub struct WsMessage {
+    pub stream: String,
+    pub data: WsPayload,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum WsPayload {
+    Ticker(TickerUpdateMessage),
+    Depth(DepthUpdateMessage),
+    Trade(TradeUpdateMessage),
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TickerUpdateMessage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub c: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub l: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub V: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s: Option<String>,
+    pub id: u64,
+    pub e: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DepthUpdateMessage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b: Option<Vec<[String; 2]>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub a: Option<Vec<[String; 2]>>,
+    pub e: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TradeUpdateMessage {
+    pub e: String,
+    pub t: u64,
+    pub m: bool,
+    pub p: String,
+    pub q: String,
+    pub s: String,
+}
