@@ -151,20 +151,20 @@ impl Side {
 }
 
 //msg to ws
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct WsMessage {
     pub stream: String,
     pub data: WsPayload,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum WsPayload {
     Ticker(TickerUpdateMessage),
     Depth(DepthUpdateMessage),
     Trade(TradeUpdateMessage),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TickerUpdateMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub c: Option<String>,
@@ -182,14 +182,14 @@ pub struct TickerUpdateMessage {
     pub e: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct DepthUpdateMessage {
     pub b: Vec<[String; 2]>,
     pub a: Vec<[String; 2]>,
     pub e: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TradeUpdateMessage {
     pub e: String,
     pub t: u64,

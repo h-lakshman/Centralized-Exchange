@@ -11,3 +11,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rand = "0.8"
 redis = { version = "0.23", features = ["tokio-comp", "aio"] }
+engine = { path = "../engine" }
