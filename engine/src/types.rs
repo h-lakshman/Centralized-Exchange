@@ -29,6 +29,7 @@ pub struct TradeAdd {
     pub quantity: String,
     pub quote_quantity: String,
     pub timestamp: String,
+    pub market: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -183,10 +184,8 @@ pub struct TickerUpdateMessage {
 
 #[derive(Serialize, Deserialize)]
 pub struct DepthUpdateMessage {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub b: Option<Vec<[String; 2]>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub a: Option<Vec<[String; 2]>>,
+    pub b: Vec<[String; 2]>,
+    pub a: Vec<[String; 2]>,
     pub e: String,
 }
 

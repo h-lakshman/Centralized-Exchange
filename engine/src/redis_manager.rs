@@ -7,7 +7,6 @@ pub static REDIS_MANAGER: OnceLock<RedisManager> = OnceLock::new();
 
 pub struct RedisManager {
     pub client: Client,
-    pub queue_connection: Connection,
 }
 
 impl RedisManager {
@@ -15,10 +14,7 @@ impl RedisManager {
         let redis_url = env::var("REDIS_URL")?;
         let client = Client::open(redis_url.clone())?;
         let queue_connection = client.get_connection()?;
-        Ok(RedisManager {
-            client,
-            queue_connection,
-        })
+        Ok(RedisManager { client })
     }
     pub fn get_instance() -> &'static RedisManager {
         REDIS_MANAGER.get_or_init(|| {
@@ -27,9 +23,10 @@ impl RedisManager {
         })
     }
 
-    pub fn push_message(&mut self, message: DbMessage) -> Result<(), Box<dyn Error>> {
+    pub fn push_message(&self, message: DbMessage) -> Result<(), Box<dyn Error>> {
         let payload = serde_json::to_string(&message)?;
-        let _: () = self.queue_connection.lpush("db_processor", payload)?;
+        let mut connection = self.client.get_connection()?;
+        let _: () = connection.lpush("db_processor", payload)?;
         Ok(())
     }
 
@@ -45,7 +42,7 @@ impl RedisManager {
     }
 
     pub fn publish_message(
-        &mut self,
+        &self,
         channel: String,
         message: WsMessage,
     ) -> Result<(), Box<dyn Error>> {
