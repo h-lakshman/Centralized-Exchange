@@ -12,7 +12,6 @@ static SUBSCRIPTION_MANAGER: OnceCell<Arc<Mutex<SubscriptionManager>>> = OnceCel
 pub struct SubscriptionManager {
     subscriptions: HashMap<String, Vec<String>>,
     reverse_subscriptions: HashMap<String, Vec<String>>,
-    redis_client: Client,
     pubsub: PubSub,
 }
 
@@ -28,7 +27,6 @@ impl SubscriptionManager {
         Self {
             subscriptions: HashMap::new(),
             reverse_subscriptions: HashMap::new(),
-            redis_client: client,
             pubsub,
         }
     }
