@@ -42,7 +42,7 @@ pub struct OrderUpdate {
     pub side: Option<Side>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Order {
     pub price: u64,
     pub quantity: u64,
@@ -53,7 +53,7 @@ pub struct Order {
 }
 
 //Send To Api
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "payload")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MessageToApi {
@@ -63,27 +63,27 @@ pub enum MessageToApi {
     OpenOrders(Vec<Order>),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct DepthPayload {
     pub bids: Vec<[String; 2]>,
     pub asks: Vec<[String; 2]>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct OrderPlacedPayload {
     pub order_id: String,
     pub executed_qty: u64,
     pub fills: Vec<Fill>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct OrderCancelledPayload {
     pub order_id: String,
     pub executed_qty: u64,
     pub remaining_qty: u64,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Fill {
     pub price: String,
     pub qty: u64,
@@ -91,8 +91,8 @@ pub struct Fill {
 }
 
 //Recieve from Api
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", content = "data")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MessageFromApi {
     CreateOrder(CreateOrderPayload),
@@ -101,7 +101,7 @@ pub enum MessageFromApi {
     GetOpenOrders(GetOpenOrdersPayload),
     OnRamp(OnRampPayload),
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CreateOrderPayload {
     pub market: String,
     pub price: String,
@@ -110,31 +110,31 @@ pub struct CreateOrderPayload {
     pub user_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CancelOrderPayload {
     pub order_id: String,
     pub market: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct GetDepthPayload {
     pub market: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct GetOpenOrdersPayload {
     pub market: String,
     pub user_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct OnRampPayload {
     pub amount: String,
     pub user_id: String,
     pub txn_id: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
     Buy,

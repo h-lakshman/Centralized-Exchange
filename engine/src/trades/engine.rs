@@ -1,13 +1,11 @@
 use super::{Orderbook, OrderbookFill};
-use crate::{
-    redis_manager::RedisManager,
-    types::{
-        DbMessage, DbMessageData, DbMessageType, MessageFromApi, MessageToApi, Order,
-        OrderCancelledPayload, OrderPlacedPayload, OrderUpdate, Side, TradeAdd,
-    },
-};
+use crate::redis_manager::RedisManager;
 use chrono::Utc;
-use engine::types::{DepthUpdateMessage, TradeUpdateMessage, WsMessage, WsPayload};
+use engine::types::{
+    DbMessage, DbMessageData, DbMessageType, DepthUpdateMessage, Fill, MessageFromApi,
+    MessageToApi, Order, OrderCancelledPayload, OrderPlacedPayload, OrderUpdate, Side, TradeAdd,
+    TradeUpdateMessage, WsMessage, WsPayload,
+};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -32,9 +30,29 @@ pub struct Engine {
 
 impl Engine {
     pub fn new() -> Self {
+        let orderbook = Orderbook::new("TATA".to_string(), vec![], vec![], None, None);
+        let mut balances: HashMap<String, Balance> = HashMap::new();
+        balances.insert(
+            BASE_CURRENCY.to_string(),
+            Balance {
+                available: Decimal::from_str("1000000").unwrap(),
+                locked: Decimal::from_str("0").unwrap(),
+            },
+        );
+        balances.insert(
+            "TATA".to_string(),
+            Balance {
+                available: Decimal::from_str("1000000").unwrap(),
+                locked: Decimal::from_str("0").unwrap(),
+            },
+        );
+
+        let mut user_balances: HashMap<String, UserBalance> = HashMap::new();
+        user_balances.insert("1".to_string(), balances);
+
         Self {
-            orderbooks: Vec::new(),
-            balances: HashMap::new(),
+            orderbooks: vec![orderbook],
+            balances: user_balances,
         }
     }
 
@@ -56,7 +74,6 @@ impl Engine {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Create order error: {:?}", e);
                         if let Err(redis_err) = redis.send_to_api(
                             params.client_id.clone(),
                             MessageToApi::OrderCancelled(OrderCancelledPayload {
@@ -189,7 +206,7 @@ impl Engine {
         }
     }
 
-    fn add_orderbook(&mut self, orderbook: Orderbook) {
+    pub fn add_orderbook(&mut self, orderbook: Orderbook) {
         self.orderbooks.push(orderbook);
     }
 
@@ -246,7 +263,7 @@ impl Engine {
             fills: created
                 .fills
                 .iter()
-                .map(|fill| crate::types::Fill {
+                .map(|fill| Fill {
                     price: fill.fill.price.clone(),
                     qty: fill.fill.qty,
                     trade_id: fill.fill.trade_id,
