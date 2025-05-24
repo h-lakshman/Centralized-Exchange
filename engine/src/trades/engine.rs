@@ -3,7 +3,7 @@ use crate::{
     redis_manager::RedisManager,
     types::{
         DbMessage, DbMessageData, DbMessageType, MessageFromApi, MessageToApi, Order,
-        OrderCancelledPayload, OrderPlacedPayload, Side, TradeAdd,
+        OrderCancelledPayload, OrderPlacedPayload, OrderUpdate, Side, TradeAdd,
     },
 };
 use chrono::Utc;
@@ -237,6 +237,7 @@ impl Engine {
         //implement update db trades
         let timestamp = Utc::now().to_string();
         self.create_db_trades(&created.fills, market, side, &timestamp);
+        self.update_db_orders(&order, created.executed_quantity, &created.fills, market);
         self.publish_ws_depth_updates(&created.fills, price, market, side);
         self.publish_ws_trades(&created.fills, market, side);
         Ok(MessageToApi::OrderPlaced(OrderPlacedPayload {
@@ -539,7 +540,7 @@ impl Engine {
                     eprintln!("Failed to parse price: {:?}", e);
                 }
             }
-            RedisManager::get_instance().push_message(DbMessage {
+            if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
                 db_message_type: DbMessageType::TradeAdded,
                 data: DbMessageData::TradeAdd(TradeAdd {
                     id: fill.fill.trade_id.to_string(),
@@ -550,7 +551,46 @@ impl Engine {
                     timestamp: timestamp.to_string(),
                     market: market.to_string(),
                 }),
-            });
+            }) {
+                eprintln!("Failed to push trade added message to Redis: {:?}", e);
+            }
+        });
+    }
+
+    fn update_db_orders(
+        &self,
+        order: &Order,
+        executed_quantity: u64,
+        fills: &Vec<OrderbookFill>,
+        market: &str,
+    ) {
+        if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
+            db_message_type: DbMessageType::OrderUpdate,
+            data: DbMessageData::OrderUpdate(OrderUpdate {
+                order_id: order.order_id.clone(),
+                executed_quantity,
+                price: Some(order.price.to_string()),
+                market: Some(market.to_string()),
+                quantity: Some(order.quantity.to_string()),
+                side: Some(order.side.clone()),
+            }),
+        }) {
+            eprintln!("Failed to push order update message to Redis: {:?}", e);
+        }
+        fills.iter().for_each(|fill| {
+            if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
+                db_message_type: DbMessageType::OrderUpdate,
+                data: DbMessageData::OrderUpdate(OrderUpdate {
+                    order_id: fill.fill.trade_id.to_string(),
+                    executed_quantity: fill.fill.qty,
+                    price: None,
+                    market: None,
+                    quantity: None,
+                    side: None,
+                }),
+            }) {
+                eprintln!("Failed to push order update message to Redis: {:?}", e);
+            }
         });
     }
 
