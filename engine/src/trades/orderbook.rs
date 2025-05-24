@@ -138,7 +138,7 @@ impl Orderbook {
             }
             i += 1;
         }
-        self.asks.retain(|bid| bid.filled < bid.quantity);
+        self.bids.retain(|bid| bid.filled < bid.quantity);
         OrderCreated {
             fills,
             executed_quantity: executed_qty,
