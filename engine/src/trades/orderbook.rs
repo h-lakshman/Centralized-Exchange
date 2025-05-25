@@ -23,9 +23,10 @@ pub struct Orderbook {
     pub quote_asset: String,
     pub last_trade_id: u64,
     pub current_price: u64,
-    // Cache for depth
-    pub bids_depth: HashMap<u64, u64>, // Price -> Total quantity
-    pub asks_depth: HashMap<u64, u64>, // Price -> Total quantity
+    // Sorted depth cache using BTreeMap
+    pub bids_depth: BTreeMap<u64, u64>,
+    pub asks_depth: BTreeMap<u64, u64>,
+    pub order_id_to_price: HashMap<String, (u64, Side)>, // order_id -> (price, side)
 }
 
 //add self trade protection
@@ -45,8 +46,9 @@ impl Orderbook {
             quote_asset: BASE_CURRENCY.to_string(),
             last_trade_id: last_trade_id.unwrap_or(0),
             current_price: current_price.unwrap_or(0),
-            bids_depth: HashMap::new(),
-            asks_depth: HashMap::new(),
+            bids_depth: BTreeMap::new(),
+            asks_depth: BTreeMap::new(),
+            order_id_to_price: HashMap::new(),
         };
 
         for bid in bids {
@@ -64,6 +66,8 @@ impl Orderbook {
         let quantity = order.quantity - order.filled;
 
         *self.bids_depth.entry(price).or_insert(0) += quantity;
+        self.order_id_to_price
+            .insert(order.order_id.clone(), (price, Side::Buy));
 
         self.bids.entry(price).or_insert_with(Vec::new).push(order);
     }
@@ -73,6 +77,8 @@ impl Orderbook {
         let quantity = order.quantity - order.filled;
 
         *self.asks_depth.entry(price).or_insert(0) += quantity;
+        self.order_id_to_price
+            .insert(order.order_id.clone(), (price, Side::Sell));
 
         self.asks.entry(price).or_insert_with(Vec::new).push(order);
     }
@@ -125,7 +131,7 @@ impl Orderbook {
     }
 
     fn match_asks(&mut self, order: &mut Order) -> OrderCreated {
-        let mut fills: Vec<OrderbookFill> = Vec::new();
+        let mut fills: Vec<OrderbookFill> = Vec::with_capacity(4);
         let mut executed_quantity: u64 = 0;
 
         let mut prices_to_remove = Vec::new();
@@ -135,11 +141,9 @@ impl Orderbook {
                 break;
             }
 
-            let mut orders_to_remove = Vec::new();
-
-            for (i, ask) in ask_orders.iter_mut().enumerate() {
+            ask_orders.retain_mut(|ask| {
                 if executed_quantity >= order.quantity {
-                    break;
+                    return true;
                 }
 
                 let remaining_ask_qty = ask.quantity - ask.filled;
@@ -159,14 +163,13 @@ impl Orderbook {
                     marker_order_id: order.order_id.clone(),
                 });
 
-                if ask.filled >= ask.quantity {
-                    orders_to_remove.push(i);
+                let should_remove = ask.filled >= ask.quantity;
+                if should_remove {
+                    self.order_id_to_price.remove(&ask.order_id);
                 }
-            }
 
-            for &i in orders_to_remove.iter().rev() {
-                ask_orders.remove(i);
-            }
+                !should_remove
+            });
 
             if ask_orders.is_empty() {
                 prices_to_remove.push(ask_price);
@@ -185,7 +188,7 @@ impl Orderbook {
     }
 
     fn match_bids(&mut self, order: &mut Order) -> OrderCreated {
-        let mut fills: Vec<OrderbookFill> = Vec::new();
+        let mut fills: Vec<OrderbookFill> = Vec::with_capacity(4);
         let mut executed_qty: u64 = 0;
 
         let mut prices_to_remove = Vec::new();
@@ -195,11 +198,9 @@ impl Orderbook {
                 break;
             }
 
-            let mut orders_to_remove = Vec::new();
-
-            for (i, bid) in bid_orders.iter_mut().enumerate() {
+            bid_orders.retain_mut(|bid| {
                 if executed_qty >= order.quantity {
-                    break;
+                    return true;
                 }
 
                 let remaining_bid_qty = bid.quantity - bid.filled;
@@ -219,14 +220,13 @@ impl Orderbook {
                     marker_order_id: bid.order_id.clone(),
                 });
 
-                if bid.filled >= bid.quantity {
-                    orders_to_remove.push(i);
+                let should_remove = bid.filled >= bid.quantity;
+                if should_remove {
+                    self.order_id_to_price.remove(&bid.order_id);
                 }
-            }
 
-            for &i in orders_to_remove.iter().rev() {
-                bid_orders.remove(i);
-            }
+                !should_remove
+            });
 
             if bid_orders.is_empty() {
                 prices_to_remove.push(bid_price);
@@ -244,71 +244,66 @@ impl Orderbook {
         }
     }
 
-    //retrives depth from cache
+    //uses cachded depth
     pub fn get_depth(&self) -> DepthPayload {
-        let mut bids: Vec<[String; 2]> = self
+      
+
+        let bids: Vec<[String; 2]> = self
             .bids_depth
             .iter()
+            .rev()
             .filter(|(_, &qty)| qty > 0)
             .map(|(&price, &qty)| [price.to_string(), qty.to_string()])
             .collect();
 
-        let mut asks: Vec<[String; 2]> = self
+        let asks: Vec<[String; 2]> = self
             .asks_depth
             .iter()
             .filter(|(_, &qty)| qty > 0)
             .map(|(&price, &qty)| [price.to_string(), qty.to_string()])
             .collect();
 
-        bids.sort_by(|a, b| {
-            let price_a: u64 = a[0].parse().unwrap_or(0);
-            let price_b: u64 = b[0].parse().unwrap_or(0);
-            price_b.cmp(&price_a)
-        });
-
-        asks.sort_by(|a, b| {
-            let price_a: u64 = a[0].parse().unwrap_or(0);
-            let price_b: u64 = b[0].parse().unwrap_or(0);
-            price_a.cmp(&price_b)
-        });
-
         DepthPayload { bids, asks }
     }
 
     pub fn cancel_bid(&mut self, order: &Order) -> Option<u64> {
-        let price = order.price;
-        let index = self
-            .bids
-            .get_mut(&price)
-            .and_then(|bids| bids.iter().position(|bid| bid.order_id == order.order_id));
-        if let Some(index) = index {
-            let price: u64 = price;
-            let order = self.bids.get_mut(&price).unwrap().remove(index);
-            self.remove_from_bids_depth(price, order.quantity - order.filled);
-            return Some(price);
+        if let Some(&(price, Side::Buy)) = self.order_id_to_price.get(&order.order_id) {
+            if let Some(orders) = self.bids.get_mut(&price) {
+                if let Some(index) = orders.iter().position(|bid| bid.order_id == order.order_id) {
+                    let removed_order = orders.swap_remove(index);
+                    self.order_id_to_price.remove(&order.order_id);
+                    self.remove_from_bids_depth(
+                        price,
+                        removed_order.quantity - removed_order.filled,
+                    );
+                    return Some(price);
+                }
+            }
         }
-        return None;
+        None
     }
 
     pub fn cancel_ask(&mut self, order: &Order) -> Option<u64> {
-        let price = order.price;
-        let index = self
-            .asks
-            .get_mut(&price)
-            .and_then(|asks| asks.iter().position(|ask| ask.order_id == order.order_id));
-        if let Some(index) = index {
-            let price: u64 = price;
-            let order = self.asks.get_mut(&price).unwrap().remove(index);
-            self.remove_from_asks_depth(price, order.quantity - order.filled);
-            return Some(price);
+        if let Some(&(price, Side::Sell)) = self.order_id_to_price.get(&order.order_id) {
+            if let Some(orders) = self.asks.get_mut(&price) {
+                if let Some(index) = orders.iter().position(|ask| ask.order_id == order.order_id) {
+                    let removed_order = orders.swap_remove(index);
+                    self.order_id_to_price.remove(&order.order_id);
+                    self.remove_from_asks_depth(
+                        price,
+                        removed_order.quantity - removed_order.filled,
+                    );
+                    return Some(price);
+                }
+            }
         }
-        return None;
+        None
     }
 
     pub fn get_open_orders(&self, user_id: String) -> Vec<Order> {
         let mut open_orders = Vec::new();
 
-        for (_, orders) in &self.bids {
+        for orders in self.bids.values() {
             for order in orders {
                 if order.user_id == user_id {
                     open_orders.push(order.clone());
@@ -316,7 +311,7 @@ impl Orderbook {
             }
         }
 
-        for (_, orders) in &self.asks {
+        for orders in self.asks.values() {
             for order in orders {
                 if order.user_id == user_id {
                     open_orders.push(order.clone());

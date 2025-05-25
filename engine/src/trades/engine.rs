@@ -69,7 +69,6 @@ impl Engine {
         }
     }
 
-    // Helper function to convert u64 to decimal (always succeeds)
     fn u64_to_decimal(value: u64) -> Decimal {
         Decimal::from(value)
     }
@@ -233,8 +232,9 @@ impl Engine {
             return Err("Orderbook not found".to_string());
         }
 
-        let base_asset = payload.market.split("_").next().expect("Invalid market");
-        let quote_asset = payload.market.split("_").nth(1).expect("Invalid market");
+        let mut market_parts = payload.market.split("_");
+        let base_asset = market_parts.next().expect("Invalid market");
+        let quote_asset = market_parts.next().expect("Invalid market");
 
         self.check_and_lock_funds(
             base_asset,
@@ -326,7 +326,6 @@ impl Engine {
             }
             Side::Sell => {
                 fills.iter().for_each(|fill| {
-                    // Use pre-calculated decimal values - no parsing needed!
                     let fill_qty_decimal = Self::u64_to_decimal(fill.fill.qty);
                     let fill_amount_decimal = fill.fill.price_decimal * fill_qty_decimal;
 
@@ -423,15 +422,13 @@ impl Engine {
     }
 
     fn send_updated_depth_at(&self, price: &str, market: &str) {
-        let orderbook = match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
-            Some(orderbook) => orderbook,
+        let depth = match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
+            Some(orderbook) => orderbook.get_depth(),
             None => {
                 eprintln!("Orderbook not found");
                 return;
             }
         };
-
-        let depth = orderbook.get_depth();
 
         let updated_bids: Vec<[String; 2]> = depth
             .bids
@@ -469,73 +466,71 @@ impl Engine {
         market: &str,
         side: &Side,
     ) {
-        match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
-            Some(orderbook) => {
-                let depth = orderbook.get_depth();
-                let fill_prices: Vec<String> = fills
-                    .iter()
-                    .map(|f| &f.fill.price_string)
-                    .cloned()
-                    .collect();
-                if let Side::Buy = side {
-                    let updated_asks: Vec<[String; 2]> = depth
-                        .asks
-                        .iter()
-                        .filter(|x| x.get(0).map_or(false, |p| fill_prices.contains(p)))
-                        .map(|x| [x[0].clone(), x[1].clone()])
-                        .collect();
-                    let updated_bids = depth
-                        .bids
-                        .iter()
-                        .filter(|x: &&[String; 2]| x[0] == price)
-                        .map(|x| [x[0].clone(), x[1].clone()])
-                        .collect();
-                    println!("publishing updated depth");
-                    if let Err(e) = RedisManager::get_instance().publish_message(
-                        format!("depth@{}", market),
-                        WsMessage {
-                            stream: format!("depth@{}", market),
-                            data: WsPayload::Depth(DepthUpdateMessage {
-                                e: "depth".to_string(),
-                                a: updated_asks,
-                                b: updated_bids,
-                            }),
-                        },
-                    ) {
-                        eprintln!("Failed to send depth update message to Redis: {:?}", e);
-                    }
-                } else {
-                    let updated_bids: Vec<[String; 2]> = depth
-                        .bids
-                        .iter()
-                        .filter(|x| x.get(0).map_or(false, |price| fill_prices.contains(price)))
-                        .map(|x| [x[0].clone(), x[1].clone()])
-                        .collect();
-                    let updated_asks = depth
-                        .asks
-                        .iter()
-                        .filter(|x: &&[String; 2]| x[0] == price)
-                        .map(|x| [x[0].clone(), x[1].clone()])
-                        .collect();
-                    println!("publishing updated depth");
-                    if let Err(e) = RedisManager::get_instance().publish_message(
-                        format!("depth@{}", market),
-                        WsMessage {
-                            stream: format!("depth@{}", market),
-                            data: WsPayload::Depth(DepthUpdateMessage {
-                                e: "depth".to_string(),
-                                a: updated_asks,
-                                b: updated_bids,
-                            }),
-                        },
-                    ) {
-                        eprintln!("Failed to send depth update message to Redis: {:?}", e);
-                    }
-                }
-            }
+        let depth = match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
+            Some(orderbook) => orderbook.get_depth(),
             None => {
                 eprintln!("Orderbook not found");
                 return;
+            }
+        };
+        let fill_prices: Vec<String> = fills
+            .iter()
+            .map(|f| &f.fill.price_string)
+            .cloned()
+            .collect();
+        if let Side::Buy = side {
+            let updated_asks: Vec<[String; 2]> = depth
+                .asks
+                .iter()
+                .filter(|x| x.get(0).map_or(false, |p| fill_prices.contains(p)))
+                .map(|x| [x[0].clone(), x[1].clone()])
+                .collect();
+            let updated_bids = depth
+                .bids
+                .iter()
+                .filter(|x: &&[String; 2]| x[0] == price)
+                .map(|x| [x[0].clone(), x[1].clone()])
+                .collect();
+            println!("publishing updated depth");
+            if let Err(e) = RedisManager::get_instance().publish_message(
+                format!("depth@{}", market),
+                WsMessage {
+                    stream: format!("depth@{}", market),
+                    data: WsPayload::Depth(DepthUpdateMessage {
+                        e: "depth".to_string(),
+                        a: updated_asks,
+                        b: updated_bids,
+                    }),
+                },
+            ) {
+                eprintln!("Failed to send depth update message to Redis: {:?}", e);
+            }
+        } else {
+            let updated_bids: Vec<[String; 2]> = depth
+                .bids
+                .iter()
+                .filter(|x| x.get(0).map_or(false, |price| fill_prices.contains(price)))
+                .map(|x| [x[0].clone(), x[1].clone()])
+                .collect();
+            let updated_asks = depth
+                .asks
+                .iter()
+                .filter(|x: &&[String; 2]| x[0] == price)
+                .map(|x| [x[0].clone(), x[1].clone()])
+                .collect();
+            println!("publishing updated depth");
+            if let Err(e) = RedisManager::get_instance().publish_message(
+                format!("depth@{}", market),
+                WsMessage {
+                    stream: format!("depth@{}", market),
+                    data: WsPayload::Depth(DepthUpdateMessage {
+                        e: "depth".to_string(),
+                        a: updated_asks,
+                        b: updated_bids,
+                    }),
+                },
+            ) {
+                eprintln!("Failed to send depth update message to Redis: {:?}", e);
             }
         }
     }
@@ -570,7 +565,6 @@ impl Engine {
         timestamp: &str,
     ) {
         fills.iter().for_each(|fill| {
-            // Use pre-parsed u64 price - no parsing needed!
             let quote_quantity = fill.fill.qty.checked_mul(fill.fill.price_u64).unwrap();
             if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
                 db_message_type: DbMessageType::TradeAdded,
@@ -629,6 +623,8 @@ impl Engine {
     pub fn get_random_id(&self) -> String {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        format!("{:x}{:x}", rng.r#gen::<u64>(), rng.r#gen::<u64>())
+        let id1 = rng.gen::<u64>();
+        let id2 = rng.gen::<u64>();
+        format!("{:x}{:x}", id1, id2)
     }
 }

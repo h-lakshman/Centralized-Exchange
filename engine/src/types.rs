@@ -65,7 +65,7 @@ pub enum MessageToApi {
     OpenOrders(Vec<Order>),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DepthPayload {
     pub bids: Vec<[String; 2]>,
     pub asks: Vec<[String; 2]>,
