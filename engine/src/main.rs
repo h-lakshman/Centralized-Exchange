@@ -14,7 +14,15 @@ fn main() {
         println!("Waiting for messages...");
         match redis.get_message() {
             Ok((client_id, message)) => {
-                engine.process(ProcessParams { message, client_id });
+                match ProcessParams::from_api_message(message, client_id.clone()) {
+                    Ok(params) => {
+                        engine.process(params);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to parse message: {}", e);
+                        continue;
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("Failed to get message: {}", e);

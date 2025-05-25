@@ -1,13 +1,12 @@
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 
-use engine::types::{DepthPayload, Fill, Order, Side};
+use engine::types::{DepthPayload, InternalFill, Order, Side};
 
 use super::BASE_CURRENCY;
 
-// Extended Fill struct with additional fields needed for orderbook
 pub struct OrderbookFill {
-    pub fill: Fill,
+    pub fill: InternalFill,
     pub other_user_id: String,
     pub marker_order_id: String,
 }
@@ -122,7 +121,6 @@ impl Orderbook {
                 self.add_ask_to_level(order.clone());
                 return ongoing_order;
             }
-            _ => panic!("Invalid order side: {}", order.side.as_str()),
         }
     }
 
@@ -156,11 +154,7 @@ impl Orderbook {
                 }
 
                 fills.push(OrderbookFill {
-                    fill: Fill {
-                        price: ask.price.to_string(),
-                        qty: filled_qty,
-                        trade_id: self.last_trade_id,
-                    },
+                    fill: InternalFill::new(ask.price, filled_qty, self.last_trade_id),
                     other_user_id: ask.user_id.clone(),
                     marker_order_id: order.order_id.clone(),
                 });
@@ -220,11 +214,7 @@ impl Orderbook {
                 }
 
                 fills.push(OrderbookFill {
-                    fill: Fill {
-                        price: bid.price.to_string(),
-                        qty: amount_remaining,
-                        trade_id: self.last_trade_id,
-                    },
+                    fill: InternalFill::new(bid.price, amount_remaining, self.last_trade_id),
                     other_user_id: bid.user_id.clone(),
                     marker_order_id: bid.order_id.clone(),
                 });

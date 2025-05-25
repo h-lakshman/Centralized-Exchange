@@ -1,4 +1,6 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -197,4 +199,111 @@ pub struct TradeUpdateMessage {
     pub p: String,
     pub q: String,
     pub s: String,
+}
+
+#[derive(Debug)]
+pub enum InternalMessage {
+    CreateOrder(InternalCreateOrderPayload),
+    CancelOrder(CancelOrderPayload),
+    GetDepth(GetDepthPayload),
+    GetOpenOrders(GetOpenOrdersPayload),
+    OnRamp(InternalOnRampPayload),
+}
+
+#[derive(Debug)]
+pub struct InternalCreateOrderPayload {
+    pub market: String,
+    pub price: u64,
+    pub quantity: u64,
+    pub price_decimal: Decimal,
+    pub quantity_decimal: Decimal,
+    pub side: Side,
+    pub user_id: String,
+}
+
+#[derive(Debug)]
+pub struct InternalOnRampPayload {
+    pub amount: Decimal,
+    pub user_id: String,
+    pub txn_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct InternalFill {
+    pub price_u64: u64,
+    pub price_decimal: Decimal,
+    pub price_string: String,
+    pub qty: u64,
+    pub trade_id: u64,
+}
+
+impl InternalFill {
+    pub fn new(price_u64: u64, qty: u64, trade_id: u64) -> Self {
+        let price_decimal = Decimal::from(price_u64);
+        let price_string = price_u64.to_string();
+
+        Self {
+            price_u64,
+            price_decimal,
+            price_string,
+            qty,
+            trade_id,
+        }
+    }
+
+    pub fn to_external_fill(&self) -> Fill {
+        Fill {
+            price: self.price_string.clone(),
+            qty: self.qty,
+            trade_id: self.trade_id,
+        }
+    }
+}
+
+impl InternalMessage {
+    pub fn from_api_message(api_message: MessageFromApi) -> Result<Self, String> {
+        match api_message {
+            MessageFromApi::CreateOrder(payload) => {
+                let price_u64 = payload
+                    .price
+                    .parse::<u64>()
+                    .map_err(|_| format!("Invalid price format: {}", payload.price))?;
+
+                let quantity_u64 = payload
+                    .quantity
+                    .parse::<u64>()
+                    .map_err(|_| format!("Invalid quantity format: {}", payload.quantity))?;
+
+                let price_decimal = Decimal::from_str(&payload.price)
+                    .map_err(|_| format!("Invalid price decimal format: {}", payload.price))?;
+
+                let quantity_decimal = Decimal::from_str(&payload.quantity).map_err(|_| {
+                    format!("Invalid quantity decimal format: {}", payload.quantity)
+                })?;
+
+                Ok(InternalMessage::CreateOrder(InternalCreateOrderPayload {
+                    market: payload.market,
+                    price: price_u64,
+                    quantity: quantity_u64,
+                    price_decimal,
+                    quantity_decimal,
+                    side: payload.side,
+                    user_id: payload.user_id,
+                }))
+            }
+            MessageFromApi::CancelOrder(payload) => Ok(InternalMessage::CancelOrder(payload)),
+            MessageFromApi::GetDepth(payload) => Ok(InternalMessage::GetDepth(payload)),
+            MessageFromApi::GetOpenOrders(payload) => Ok(InternalMessage::GetOpenOrders(payload)),
+            MessageFromApi::OnRamp(payload) => {
+                let amount = Decimal::from_str(&payload.amount)
+                    .map_err(|_| format!("Invalid amount format: {}", payload.amount))?;
+
+                Ok(InternalMessage::OnRamp(InternalOnRampPayload {
+                    amount,
+                    user_id: payload.user_id,
+                    txn_id: payload.txn_id,
+                }))
+            }
+        }
+    }
 }

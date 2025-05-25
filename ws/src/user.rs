@@ -45,8 +45,10 @@ impl User {
 
     pub async fn emit(&self, message: OutgoingMessage) -> Result<(), Box<dyn std::error::Error>> {
         let json = serde_json::to_string(&message)?;
+        println!("Emitting message: {}", json);
         let mut ws = self.sender.lock().await;
         ws.send(Message::Text(json)).await?;
+        println!("Message sent to user {}", self.id);
         Ok(())
     }
 

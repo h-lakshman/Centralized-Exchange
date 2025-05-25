@@ -2,9 +2,9 @@ use super::{Orderbook, OrderbookFill};
 use crate::redis_manager::RedisManager;
 use chrono::Utc;
 use engine::types::{
-    DbMessage, DbMessageData, DbMessageType, DepthUpdateMessage, Fill, MessageFromApi,
-    MessageToApi, Order, OrderCancelledPayload, OrderPlacedPayload, OrderUpdate, Side, TradeAdd,
-    TradeUpdateMessage, WsMessage, WsPayload,
+    DbMessage, DbMessageData, DbMessageType, DepthUpdateMessage, InternalCreateOrderPayload,
+    InternalMessage, MessageFromApi, MessageToApi, Order, OrderCancelledPayload,
+    OrderPlacedPayload, OrderUpdate, Side, TradeAdd, TradeUpdateMessage, WsMessage, WsPayload,
 };
 use rust_decimal::Decimal;
 use std::collections::HashMap;
@@ -13,8 +13,21 @@ use std::str::FromStr;
 pub const BASE_CURRENCY: &str = "INR";
 
 pub struct ProcessParams {
-    pub message: MessageFromApi,
+    pub message: InternalMessage,
     pub client_id: String,
+}
+
+impl ProcessParams {
+    pub fn from_api_message(
+        api_message: MessageFromApi,
+        client_id: String,
+    ) -> Result<Self, String> {
+        let internal_message = InternalMessage::from_api_message(api_message)?;
+        Ok(ProcessParams {
+            message: internal_message,
+            client_id,
+        })
+    }
 }
 
 type UserBalance = HashMap<String, Balance>;
@@ -56,11 +69,6 @@ impl Engine {
         }
     }
 
-    // Helper function to convert string to decimal with error handling
-    fn parse_decimal(value: &str, context: &str) -> Result<Decimal, String> {
-        Decimal::from_str(value).map_err(|_| format!("Invalid {} format: {}", context, value))
-    }
-
     // Helper function to convert u64 to decimal (always succeeds)
     fn u64_to_decimal(value: u64) -> Decimal {
         Decimal::from(value)
@@ -68,14 +76,8 @@ impl Engine {
 
     pub fn process(&mut self, params: ProcessParams) {
         match params.message {
-            MessageFromApi::CreateOrder(payload) => {
-                let result: Result<MessageToApi, String> = self.create_order(
-                    &payload.market,
-                    &payload.price,
-                    &payload.quantity,
-                    &payload.side,
-                    &payload.user_id,
-                );
+            InternalMessage::CreateOrder(payload) => {
+                let result: Result<MessageToApi, String> = self.create_order(payload);
                 let redis = RedisManager::get_instance();
                 match result {
                     Ok(order) => {
@@ -100,7 +102,7 @@ impl Engine {
                     }
                 }
             }
-            MessageFromApi::CancelOrder(cancel_order_payload) => {
+            InternalMessage::CancelOrder(cancel_order_payload) => {
                 let order_id = cancel_order_payload.order_id;
                 let cancel_market = cancel_order_payload.market;
                 let quote_asset = cancel_market.split("_").next().unwrap();
@@ -137,27 +139,27 @@ impl Engine {
 
                 match order.side {
                     Side::Buy => {
-                        if let Some(price) = cancel_orderbook.cancel_bid(&order.clone()) {
-                            let left_quantity = (order.quantity - order.filled) * order.price;
+                        if let Some(price) = cancel_orderbook.cancel_bid(&order) {
+                            let left_quantity_decimal =
+                                Decimal::from((order.quantity - order.filled) * order.price);
                             let balance = self.balances.get_mut(&order.user_id).unwrap();
                             balance.get_mut(BASE_CURRENCY).unwrap().available +=
-                                Decimal::from_str(&left_quantity.to_string()).unwrap();
-                            balance.get_mut(BASE_CURRENCY).unwrap().locked -=
-                                Decimal::from_str(&left_quantity.to_string()).unwrap();
+                                left_quantity_decimal;
+                            balance.get_mut(BASE_CURRENCY).unwrap().locked -= left_quantity_decimal;
 
-                            self.send_updated_depth_at(&price.to_string(), cancel_market.as_str());
+                            self.send_updated_depth_at(&price.to_string(), &cancel_market);
                         }
                     }
                     Side::Sell => {
-                        if let Some(price) = cancel_orderbook.cancel_ask(&order.clone()) {
-                            let left_quantity = order.quantity - order.filled;
+                        if let Some(price) = cancel_orderbook.cancel_ask(&order) {
+                            let left_quantity_decimal =
+                                Decimal::from(order.quantity - order.filled);
                             let balance = self.balances.get_mut(&order.user_id).unwrap();
                             balance.get_mut(quote_asset).unwrap().available +=
-                                Decimal::from_str(&left_quantity.to_string()).unwrap();
-                            balance.get_mut(quote_asset).unwrap().locked -=
-                                Decimal::from_str(&left_quantity.to_string()).unwrap();
+                                left_quantity_decimal;
+                            balance.get_mut(quote_asset).unwrap().locked -= left_quantity_decimal;
 
-                            self.send_updated_depth_at(&price.to_string(), cancel_market.as_str());
+                            self.send_updated_depth_at(&price.to_string(), &cancel_market);
                         }
                     }
                 }
@@ -172,7 +174,7 @@ impl Engine {
                     eprintln!("Failed to send order cancelled message to Redis: {:?}", e);
                 }
             }
-            MessageFromApi::GetOpenOrders(get_open_orders_payload) => {
+            InternalMessage::GetOpenOrders(get_open_orders_payload) => {
                 match self
                     .orderbooks
                     .iter()
@@ -193,7 +195,7 @@ impl Engine {
                     }
                 }
             }
-            MessageFromApi::GetDepth(get_depth_payload) => {
+            InternalMessage::GetDepth(get_depth_payload) => {
                 let market = get_depth_payload.market;
                 match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
                     Some(orderbook) => {
@@ -207,10 +209,9 @@ impl Engine {
                     None => {}
                 }
             }
-            MessageFromApi::OnRamp(on_ramp_payload) => {
+            InternalMessage::OnRamp(on_ramp_payload) => {
                 let user_id = on_ramp_payload.user_id;
-                let amount = Decimal::from_str(&on_ramp_payload.amount)
-                    .expect("Failed to parse amount to Decimal");
+                let amount = on_ramp_payload.amount;
                 self.on_ramp(&user_id, amount);
             }
         }
@@ -222,62 +223,74 @@ impl Engine {
 
     fn create_order(
         &mut self,
-        market: &str,
-        price: &str,
-        quantity: &str,
-        side: &Side,
-        user_id: &str,
+        payload: InternalCreateOrderPayload,
     ) -> Result<MessageToApi, String> {
-        let orderbook_exists = self.orderbooks.iter().any(|ob| ob.ticker() == market);
+        let orderbook_exists = self
+            .orderbooks
+            .iter()
+            .any(|ob| ob.ticker() == payload.market);
         if !orderbook_exists {
             return Err("Orderbook not found".to_string());
         }
 
-        let base_asset = market.split("_").next().expect("Invalid market");
-        let quote_asset = market.split("_").nth(1).expect("Invalid market");
+        let base_asset = payload.market.split("_").next().expect("Invalid market");
+        let quote_asset = payload.market.split("_").nth(1).expect("Invalid market");
 
-        self.check_and_lock_funds(base_asset, quote_asset, side, user_id, price, quantity)?;
+        self.check_and_lock_funds(
+            base_asset,
+            quote_asset,
+            &payload.side,
+            &payload.user_id,
+            payload.price_decimal,
+            payload.quantity_decimal,
+        )?;
 
         let mut order = Order {
-            price: price.parse().unwrap(),
-            quantity: quantity.parse().unwrap(),
+            price: payload.price,
+            quantity: payload.quantity,
             order_id: self.get_random_id(),
             filled: 0,
-            side: side.clone(),
-            user_id: user_id.to_string(),
+            side: payload.side.clone(),
+            user_id: payload.user_id.clone(),
         };
 
         let orderbook = self
             .orderbooks
             .iter_mut()
-            .find(|ob| ob.ticker() == market)
+            .find(|ob| ob.ticker() == payload.market)
             .unwrap();
         let created = orderbook.add_order(&mut order);
         self.update_balances(
-            user_id,
+            &payload.user_id,
             base_asset,
             quote_asset,
-            side,
+            &payload.side,
             &created.fills,
             created.executed_quantity,
         );
 
         let timestamp = Utc::now().to_string();
-        self.create_db_trades(&created.fills, market, side, &timestamp);
-        self.update_db_orders(&order, created.executed_quantity, &created.fills, market);
-        self.publish_ws_depth_updates(&created.fills, price, market, side);
-        self.publish_ws_trades(&created.fills, market, side);
+        self.create_db_trades(&created.fills, &payload.market, &payload.side, &timestamp);
+        self.update_db_orders(
+            &order,
+            created.executed_quantity,
+            &created.fills,
+            &payload.market,
+        );
+        self.publish_ws_depth_updates(
+            &created.fills,
+            &payload.price.to_string(),
+            &payload.market,
+            &payload.side,
+        );
+        self.publish_ws_trades(&created.fills, &payload.market, &payload.side);
         Ok(MessageToApi::OrderPlaced(OrderPlacedPayload {
             order_id: order.order_id,
             executed_qty: created.executed_quantity,
             fills: created
                 .fills
                 .iter()
-                .map(|fill| Fill {
-                    price: fill.fill.price.clone(),
-                    qty: fill.fill.qty,
-                    trade_id: fill.fill.trade_id,
-                })
+                .map(|fill| fill.fill.to_external_fill())
                 .collect(),
         }))
     }
@@ -294,20 +307,9 @@ impl Engine {
         match side {
             Side::Buy => {
                 fills.iter().for_each(|fill| {
-                    // Pre-calculate decimal values to avoid repeated conversions
-                    let fill_price_decimal =
-                        match Self::parse_decimal(&fill.fill.price, "fill price") {
-                            Ok(val) => val,
-                            Err(e) => {
-                                eprintln!(
-                                    "Error parsing fill price for trade_id {}: {}. Skipping.",
-                                    fill.fill.trade_id, e
-                                );
-                                return;
-                            }
-                        };
+                    // Use pre-calculated decimal values - no parsing needed!
                     let fill_qty_decimal = Self::u64_to_decimal(fill.fill.qty);
-                    let fill_amount_decimal = fill_price_decimal * fill_qty_decimal;
+                    let fill_amount_decimal = fill.fill.price_decimal * fill_qty_decimal;
 
                     //update quote balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
@@ -324,20 +326,9 @@ impl Engine {
             }
             Side::Sell => {
                 fills.iter().for_each(|fill| {
-                    // Pre-calculate decimal values to avoid repeated conversions
-                    let fill_price_decimal =
-                        match Self::parse_decimal(&fill.fill.price, "fill price") {
-                            Ok(val) => val,
-                            Err(e) => {
-                                eprintln!(
-                                    "Error parsing fill price for trade_id {}: {}. Skipping.",
-                                    fill.fill.trade_id, e
-                                );
-                                return;
-                            }
-                        };
+                    // Use pre-calculated decimal values - no parsing needed!
                     let fill_qty_decimal = Self::u64_to_decimal(fill.fill.qty);
-                    let fill_amount_decimal = fill_price_decimal * fill_qty_decimal;
+                    let fill_amount_decimal = fill.fill.price_decimal * fill_qty_decimal;
 
                     //update quote balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
@@ -390,16 +381,13 @@ impl Engine {
         quote_asset: &str,
         side: &Side,
         user_id: &str,
-        price: &str,
-        quantity: &str,
+        price_decimal: Decimal,
+        quantity_decimal: Decimal,
     ) -> Result<(), String> {
         let user = match self.balances.get_mut(user_id) {
             Some(user) => user,
             None => return Err("User not found".to_string()),
         };
-
-        let price_decimal = Self::parse_decimal(price, "price")?;
-        let quantity_decimal = Self::parse_decimal(quantity, "quantity")?;
 
         match side {
             Side::Buy => {
@@ -484,7 +472,11 @@ impl Engine {
         match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
             Some(orderbook) => {
                 let depth = orderbook.get_depth();
-                let fill_prices: Vec<String> = fills.iter().map(|f| f.fill.price.clone()).collect();
+                let fill_prices: Vec<String> = fills
+                    .iter()
+                    .map(|f| &f.fill.price_string)
+                    .cloned()
+                    .collect();
                 if let Side::Buy = side {
                     let updated_asks: Vec<[String; 2]> = depth
                         .asks
@@ -559,7 +551,7 @@ impl Engine {
                         e: "trade".to_string(),
                         t: fill.fill.trade_id,
                         m: is_buyer_maker,
-                        p: fill.fill.price.clone(),
+                        p: fill.fill.price_string.clone(),
                         q: fill.fill.qty.to_string(),
                         s: market.to_string(),
                     }),
@@ -578,21 +570,14 @@ impl Engine {
         timestamp: &str,
     ) {
         fills.iter().for_each(|fill| {
-            let mut quote_quantity = 0;
-            match fill.fill.price.parse::<u64>() {
-                Ok(price) => {
-                    quote_quantity = fill.fill.qty.checked_mul(price).unwrap();
-                }
-                Err(e) => {
-                    eprintln!("Failed to parse price: {:?}", e);
-                }
-            }
+            // Use pre-parsed u64 price - no parsing needed!
+            let quote_quantity = fill.fill.qty.checked_mul(fill.fill.price_u64).unwrap();
             if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
                 db_message_type: DbMessageType::TradeAdded,
                 data: DbMessageData::TradeAdd(TradeAdd {
                     id: fill.fill.trade_id.to_string(),
                     is_buyer_maker: matches!(side, Side::Sell),
-                    price: fill.fill.price.clone(),
+                    price: fill.fill.price_string.clone(),
                     quantity: fill.fill.qty.to_string(),
                     quote_quantity: quote_quantity.to_string(),
                     timestamp: timestamp.to_string(),
