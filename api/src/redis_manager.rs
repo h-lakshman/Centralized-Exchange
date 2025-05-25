@@ -1,32 +1,43 @@
 use futures_util::StreamExt;
-use redis::{AsyncCommands, Client};
+use redis::{
+    aio::{Connection, PubSub},
+    AsyncCommands, Client,
+};
 use std::env;
 use std::error::Error;
-use std::sync::OnceLock;
+use tokio::sync::{Mutex, OnceCell};
 
 use crate::types::{MessageFromOrderbook, MessageToEngine};
 
 pub struct RedisManager {
-    client: Client,
-    publisher: Client,
+    client: Mutex<Connection>,
+    pubsub: Mutex<PubSub>,
 }
 
-pub static REDIS_MANAGER: OnceLock<RedisManager> = OnceLock::new();
+pub static REDIS_MANAGER: OnceCell<RedisManager> = OnceCell::const_new();
 
 impl RedisManager {
-    fn new() -> Result<Self, Box<dyn Error>> {
+    async fn new() -> Result<Self, Box<dyn Error>> {
         let redis_url = env::var("REDIS_URL")?;
         let client = Client::open(redis_url.clone())?;
-        let publisher = Client::open(redis_url.clone())?;
+        let client_conn = client.get_async_connection().await?;
+        let pubsub_client = Client::open(redis_url.clone())?;
+        let pubsub_conn = pubsub_client.get_async_connection().await?;
 
-        Ok(RedisManager { client, publisher })
+        Ok(RedisManager {
+            client: Mutex::new(client_conn),
+            pubsub: Mutex::new(pubsub_conn.into_pubsub()),
+        })
     }
 
-    pub fn get_instance() -> &'static RedisManager {
-        REDIS_MANAGER.get_or_init(|| {
-            RedisManager::new()
-                .expect("Failed to create RedisManager instance or REDIS_URL is not set")
-        })
+    pub async fn get_instance() -> &'static RedisManager {
+        REDIS_MANAGER
+            .get_or_init(|| async {
+                RedisManager::new()
+                    .await
+                    .expect("Failed to create RedisManager instance or REDIS_URL is not set")
+            })
+            .await
     }
 
     pub async fn send_and_await(
@@ -34,20 +45,20 @@ impl RedisManager {
         message: MessageToEngine,
     ) -> Result<MessageFromOrderbook, Box<dyn Error>> {
         // async redis connectors
-        let client_conn = self.client.get_async_connection().await?;
-        let mut publisher_conn = self.publisher.get_async_connection().await?;
 
         let client_id = self.get_random_client_id();
 
         //pubsub setup
-        let mut pubsub = client_conn.into_pubsub();
+        let mut pubsub = self.pubsub.lock().await;
         pubsub.subscribe(&client_id).await?;
         let mut pubsub_stream = pubsub.on_message();
 
         let payload = serde_json::to_string(&(client_id.clone(), message))?;
 
         //push to queue
-        let _: () = publisher_conn.lpush("messages", payload).await?;
+        let mut client = self.client.lock().await;
+        let _: () = client.lpush("messages", payload).await?;
+        drop(client);
 
         // await the stream to get message and response
         if let Some(msg) = pubsub_stream.next().await {
