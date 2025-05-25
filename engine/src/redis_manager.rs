@@ -1,5 +1,5 @@
 use engine::types::{DbMessage, MessageFromApi, MessageToApi, WsMessage};
-use redis::{Client, Commands, Connection};
+use redis::{Client, Commands};
 use std::{env, error::Error, sync::OnceLock};
 
 pub static REDIS_MANAGER: OnceLock<RedisManager> = OnceLock::new();
@@ -24,9 +24,7 @@ impl RedisManager {
     pub fn get_message(&self) -> Result<(String, MessageFromApi), Box<dyn Error>> {
         let mut connection = self.client.get_connection()?;
         let (_, payload): (String, String) = connection.brpop("messages".to_string(), 0)?;
-        println!("Received raw message from queue: {}", payload);
         let (client_id, message): (String, MessageFromApi) = serde_json::from_str(&payload)?;
-        println!("Deserialized message: {:?}", message);
         Ok((client_id, message))
     }
 

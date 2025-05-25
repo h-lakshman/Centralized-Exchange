@@ -56,6 +56,16 @@ impl Engine {
         }
     }
 
+    // Helper function to convert string to decimal with error handling
+    fn parse_decimal(value: &str, context: &str) -> Result<Decimal, String> {
+        Decimal::from_str(value).map_err(|_| format!("Invalid {} format: {}", context, value))
+    }
+
+    // Helper function to convert u64 to decimal (always succeeds)
+    fn u64_to_decimal(value: u64) -> Decimal {
+        Decimal::from(value)
+    }
+
     pub fn process(&mut self, params: ProcessParams) {
         match params.message {
             MessageFromApi::CreateOrder(payload) => {
@@ -108,12 +118,12 @@ impl Engine {
                 let order = cancel_orderbook
                     .asks
                     .iter()
-                    .find(|o| o.order_id == order_id)
+                    .find_map(|(_, orders)| orders.iter().find(|o| o.order_id == order_id))
                     .or_else(|| {
                         cancel_orderbook
                             .bids
                             .iter()
-                            .find(|o| o.order_id == order_id)
+                            .find_map(|(_, orders)| orders.iter().find(|o| o.order_id == order_id))
                     })
                     .cloned();
 
@@ -251,7 +261,7 @@ impl Engine {
             &created.fills,
             created.executed_quantity,
         );
-        //implement update db trades
+
         let timestamp = Utc::now().to_string();
         self.create_db_trades(&created.fills, market, side, &timestamp);
         self.update_db_orders(&order, created.executed_quantity, &created.fills, market);
@@ -284,44 +294,62 @@ impl Engine {
         match side {
             Side::Buy => {
                 fills.iter().for_each(|fill| {
+                    // Pre-calculate decimal values to avoid repeated conversions
+                    let fill_price_decimal =
+                        match Self::parse_decimal(&fill.fill.price, "fill price") {
+                            Ok(val) => val,
+                            Err(e) => {
+                                eprintln!(
+                                    "Error parsing fill price for trade_id {}: {}. Skipping.",
+                                    fill.fill.trade_id, e
+                                );
+                                return;
+                            }
+                        };
+                    let fill_qty_decimal = Self::u64_to_decimal(fill.fill.qty);
+                    let fill_amount_decimal = fill_price_decimal * fill_qty_decimal;
+
                     //update quote balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                    other_user.get_mut(quote_asset).unwrap().available -=
-                        Decimal::from_str(&fill.fill.price).unwrap()
-                            * Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
+                    other_user.get_mut(quote_asset).unwrap().available -= fill_amount_decimal;
                     let currrent_user = self.balances.get_mut(user_id).unwrap();
-                    currrent_user.get_mut(quote_asset).unwrap().locked +=
-                        Decimal::from_str(&fill.fill.price).unwrap()
-                            * Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
+                    currrent_user.get_mut(quote_asset).unwrap().locked += fill_amount_decimal;
 
                     //update base balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                    other_user.get_mut(base_asset).unwrap().locked -=
-                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
+                    other_user.get_mut(base_asset).unwrap().locked -= fill_qty_decimal;
                     let current_user = self.balances.get_mut(user_id).unwrap();
-                    current_user.get_mut(base_asset).unwrap().locked +=
-                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
+                    current_user.get_mut(base_asset).unwrap().locked += fill_qty_decimal;
                 });
             }
             Side::Sell => {
                 fills.iter().for_each(|fill| {
+                    // Pre-calculate decimal values to avoid repeated conversions
+                    let fill_price_decimal =
+                        match Self::parse_decimal(&fill.fill.price, "fill price") {
+                            Ok(val) => val,
+                            Err(e) => {
+                                eprintln!(
+                                    "Error parsing fill price for trade_id {}: {}. Skipping.",
+                                    fill.fill.trade_id, e
+                                );
+                                return;
+                            }
+                        };
+                    let fill_qty_decimal = Self::u64_to_decimal(fill.fill.qty);
+                    let fill_amount_decimal = fill_price_decimal * fill_qty_decimal;
+
                     //update quote balance
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                    other_user.get_mut(quote_asset).unwrap().locked -=
-                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap()
-                            * Decimal::from_str(&fill.fill.price).unwrap();
+                    other_user.get_mut(quote_asset).unwrap().locked -= fill_amount_decimal;
                     let current_user = self.balances.get_mut(user_id).unwrap();
-                    current_user.get_mut(quote_asset).unwrap().available +=
-                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap()
-                            * Decimal::from_str(&fill.fill.price).unwrap();
+                    current_user.get_mut(quote_asset).unwrap().available += fill_amount_decimal;
 
                     //update base asset
                     let other_user = self.balances.get_mut(&fill.other_user_id).unwrap();
-                    other_user.get_mut(base_asset).unwrap().available +=
-                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
+                    other_user.get_mut(base_asset).unwrap().available += fill_qty_decimal;
                     let current_user = self.balances.get_mut(user_id).unwrap();
-                    current_user.get_mut(base_asset).unwrap().locked -=
-                        Decimal::from_str(&fill.fill.qty.to_string()).unwrap();
+                    current_user.get_mut(base_asset).unwrap().locked -= fill_qty_decimal;
                 });
             }
         }
@@ -369,6 +397,10 @@ impl Engine {
             Some(user) => user,
             None => return Err("User not found".to_string()),
         };
+
+        let price_decimal = Self::parse_decimal(price, "price")?;
+        let quantity_decimal = Self::parse_decimal(quantity, "quantity")?;
+
         match side {
             Side::Buy => {
                 let user_quote_balance = match user.get_mut(quote_asset) {
@@ -376,15 +408,13 @@ impl Engine {
                     None => return Err("User quote balance not found".to_string()),
                 };
 
-                if user_quote_balance.available
-                    < Decimal::from_str(price).unwrap() * Decimal::from_str(quantity).unwrap()
-                {
+                let required_quote_amount = price_decimal * quantity_decimal;
+                if user_quote_balance.available < required_quote_amount {
                     return Err("Insufficient quote balance".to_string());
                 }
 
-                user_quote_balance.available -=
-                    Decimal::from_str(price).unwrap() * Decimal::from_str(quantity).unwrap();
-                user_quote_balance.locked += Decimal::from_str(quantity).unwrap();
+                user_quote_balance.available -= required_quote_amount;
+                user_quote_balance.locked += required_quote_amount; // Lock quote currency amount, not just quantity
                 Ok(())
             }
             Side::Sell => {
@@ -393,12 +423,12 @@ impl Engine {
                     None => return Err("User base balance not found".to_string()),
                 };
 
-                if user_base_balance.available < Decimal::from_str(quantity).unwrap() {
+                if user_base_balance.available < quantity_decimal {
                     return Err("Insufficient base balance".to_string());
                 }
 
-                user_base_balance.available -= Decimal::from_str(quantity).unwrap();
-                user_base_balance.locked += Decimal::from_str(quantity).unwrap();
+                user_base_balance.available -= quantity_decimal;
+                user_base_balance.locked += quantity_decimal;
                 Ok(())
             }
         }
