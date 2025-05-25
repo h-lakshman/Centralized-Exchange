@@ -73,26 +73,29 @@ impl Engine {
         Decimal::from(value)
     }
 
-    pub fn process(&mut self, params: ProcessParams) {
+    pub async fn process(&mut self, params: ProcessParams) {
         match params.message {
             InternalMessage::CreateOrder(payload) => {
-                let result: Result<MessageToApi, String> = self.create_order(payload);
-                let redis = RedisManager::get_instance();
+                let result: Result<MessageToApi, String> = self.create_order(payload).await;
+                let redis = RedisManager::get_instance().await;
                 match result {
                     Ok(order) => {
-                        if let Err(e) = redis.send_to_api(params.client_id.clone(), order) {
+                        if let Err(e) = redis.send_to_api(params.client_id.clone(), order).await {
                             eprintln!("Failed to send order placed message to Redis: {:?}", e);
                         }
                     }
                     Err(e) => {
-                        if let Err(redis_err) = redis.send_to_api(
-                            params.client_id.clone(),
-                            MessageToApi::OrderCancelled(OrderCancelledPayload {
-                                order_id: "".to_string(),
-                                executed_qty: 0,
-                                remaining_qty: 0,
-                            }),
-                        ) {
+                        if let Err(redis_err) = redis
+                            .send_to_api(
+                                params.client_id.clone(),
+                                MessageToApi::OrderCancelled(OrderCancelledPayload {
+                                    order_id: "".to_string(),
+                                    executed_qty: 0,
+                                    remaining_qty: 0,
+                                }),
+                            )
+                            .await
+                        {
                             eprintln!(
                                 "Failed to send order cancelled message to Redis: {:?}",
                                 redis_err
@@ -146,7 +149,8 @@ impl Engine {
                                 left_quantity_decimal;
                             balance.get_mut(BASE_CURRENCY).unwrap().locked -= left_quantity_decimal;
 
-                            self.send_updated_depth_at(&price.to_string(), &cancel_market);
+                            self.send_updated_depth_at(&price.to_string(), &cancel_market)
+                                .await;
                         }
                     }
                     Side::Sell => {
@@ -158,18 +162,23 @@ impl Engine {
                                 left_quantity_decimal;
                             balance.get_mut(quote_asset).unwrap().locked -= left_quantity_decimal;
 
-                            self.send_updated_depth_at(&price.to_string(), &cancel_market);
+                            self.send_updated_depth_at(&price.to_string(), &cancel_market)
+                                .await;
                         }
                     }
                 }
-                if let Err(e) = RedisManager::get_instance().send_to_api(
-                    params.client_id,
-                    MessageToApi::OrderCancelled(OrderCancelledPayload {
-                        order_id,
-                        executed_qty: 0,
-                        remaining_qty: 0,
-                    }),
-                ) {
+                if let Err(e) = RedisManager::get_instance()
+                    .await
+                    .send_to_api(
+                        params.client_id,
+                        MessageToApi::OrderCancelled(OrderCancelledPayload {
+                            order_id,
+                            executed_qty: 0,
+                            remaining_qty: 0,
+                        }),
+                    )
+                    .await
+                {
                     eprintln!("Failed to send order cancelled message to Redis: {:?}", e);
                 }
             }
@@ -183,7 +192,9 @@ impl Engine {
                         let open_orders =
                             open_order_book.get_open_orders(get_open_orders_payload.user_id);
                         if let Err(e) = RedisManager::get_instance()
+                            .await
                             .send_to_api(params.client_id, MessageToApi::OpenOrders(open_orders))
+                            .await
                         {
                             eprintln!("Failed to send open orders message to Redis: {:?}", e);
                         }
@@ -198,10 +209,14 @@ impl Engine {
                 let market = get_depth_payload.market;
                 match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
                     Some(orderbook) => {
-                        if let Err(e) = RedisManager::get_instance().send_to_api(
-                            params.client_id,
-                            MessageToApi::Depth(orderbook.get_depth()),
-                        ) {
+                        if let Err(e) = RedisManager::get_instance()
+                            .await
+                            .send_to_api(
+                                params.client_id,
+                                MessageToApi::Depth(orderbook.get_depth()),
+                            )
+                            .await
+                        {
                             eprintln!("Failed to send depth message to Redis: {:?}", e);
                         }
                     }
@@ -220,7 +235,7 @@ impl Engine {
         self.orderbooks.push(orderbook);
     }
 
-    fn create_order(
+    async fn create_order(
         &mut self,
         payload: InternalCreateOrderPayload,
     ) -> Result<MessageToApi, String> {
@@ -270,20 +285,24 @@ impl Engine {
         );
 
         let timestamp = Utc::now().to_string();
-        self.create_db_trades(&created.fills, &payload.market, &payload.side, &timestamp);
+        self.create_db_trades(&created.fills, &payload.market, &payload.side, &timestamp)
+            .await;
         self.update_db_orders(
             &order,
             created.executed_quantity,
             &created.fills,
             &payload.market,
-        );
+        )
+        .await;
         self.publish_ws_depth_updates(
             &created.fills,
             &payload.price.to_string(),
             &payload.market,
             &payload.side,
-        );
-        self.publish_ws_trades(&created.fills, &payload.market, &payload.side);
+        )
+        .await;
+        self.publish_ws_trades(&created.fills, &payload.market, &payload.side)
+            .await;
         Ok(MessageToApi::OrderPlaced(OrderPlacedPayload {
             order_id: order.order_id,
             executed_qty: created.executed_quantity,
@@ -421,7 +440,7 @@ impl Engine {
         }
     }
 
-    fn send_updated_depth_at(&self, price: &str, market: &str) {
+    async fn send_updated_depth_at(&self, price: &str, market: &str) {
         let depth = match self.orderbooks.iter().find(|ob| ob.ticker() == market) {
             Some(orderbook) => orderbook.get_depth(),
             None => {
@@ -444,22 +463,26 @@ impl Engine {
             .map(|x| [x[0].clone(), x[1].clone()])
             .collect();
 
-        if let Err(e) = RedisManager::get_instance().publish_message(
-            format!("depth@{}", market),
-            WsMessage {
-                stream: format!("depth@{}", market),
-                data: WsPayload::Depth(DepthUpdateMessage {
-                    e: "depth".to_string(),
-                    a: updated_asks,
-                    b: updated_bids,
-                }),
-            },
-        ) {
+        if let Err(e) = RedisManager::get_instance()
+            .await
+            .publish_message(
+                format!("depth@{}", market),
+                WsMessage {
+                    stream: format!("depth@{}", market),
+                    data: WsPayload::Depth(DepthUpdateMessage {
+                        e: "depth".to_string(),
+                        a: updated_asks,
+                        b: updated_bids,
+                    }),
+                },
+            )
+            .await
+        {
             eprintln!("Failed to send depth update message to Redis: {:?}", e);
         }
     }
 
-    fn publish_ws_depth_updates(
+    async fn publish_ws_depth_updates(
         &self,
         fills: &Vec<OrderbookFill>,
         price: &str,
@@ -492,17 +515,21 @@ impl Engine {
                 .map(|x| [x[0].clone(), x[1].clone()])
                 .collect();
             println!("publishing updated depth");
-            if let Err(e) = RedisManager::get_instance().publish_message(
-                format!("depth@{}", market),
-                WsMessage {
-                    stream: format!("depth@{}", market),
-                    data: WsPayload::Depth(DepthUpdateMessage {
-                        e: "depth".to_string(),
-                        a: updated_asks,
-                        b: updated_bids,
-                    }),
-                },
-            ) {
+            if let Err(e) = RedisManager::get_instance()
+                .await
+                .publish_message(
+                    format!("depth@{}", market),
+                    WsMessage {
+                        stream: format!("depth@{}", market),
+                        data: WsPayload::Depth(DepthUpdateMessage {
+                            e: "depth".to_string(),
+                            a: updated_asks,
+                            b: updated_bids,
+                        }),
+                    },
+                )
+                .await
+            {
                 eprintln!("Failed to send depth update message to Redis: {:?}", e);
             }
         } else {
@@ -519,105 +546,125 @@ impl Engine {
                 .map(|x| [x[0].clone(), x[1].clone()])
                 .collect();
             println!("publishing updated depth");
-            if let Err(e) = RedisManager::get_instance().publish_message(
-                format!("depth@{}", market),
-                WsMessage {
-                    stream: format!("depth@{}", market),
-                    data: WsPayload::Depth(DepthUpdateMessage {
-                        e: "depth".to_string(),
-                        a: updated_asks,
-                        b: updated_bids,
-                    }),
-                },
-            ) {
+            if let Err(e) = RedisManager::get_instance()
+                .await
+                .publish_message(
+                    format!("depth@{}", market),
+                    WsMessage {
+                        stream: format!("depth@{}", market),
+                        data: WsPayload::Depth(DepthUpdateMessage {
+                            e: "depth".to_string(),
+                            a: updated_asks,
+                            b: updated_bids,
+                        }),
+                    },
+                )
+                .await
+            {
                 eprintln!("Failed to send depth update message to Redis: {:?}", e);
             }
         }
     }
 
-    fn publish_ws_trades(&self, fills: &Vec<OrderbookFill>, market: &str, side: &Side) {
-        fills.iter().for_each(|fill| {
+    async fn publish_ws_trades(&self, fills: &Vec<OrderbookFill>, market: &str, side: &Side) {
+        for fill in fills.iter() {
             let is_buyer_maker = matches!(side, Side::Sell);
-            if let Err(e) = RedisManager::get_instance().publish_message(
-                format!("trades@{}", market),
-                WsMessage {
-                    stream: format!("trades@{}", market),
-                    data: WsPayload::Trade(TradeUpdateMessage {
-                        e: "trade".to_string(),
-                        t: fill.fill.trade_id,
-                        m: is_buyer_maker,
-                        p: fill.fill.price_string.clone(),
-                        q: fill.fill.qty.to_string(),
-                        s: market.to_string(),
-                    }),
-                },
-            ) {
-                eprintln!("Failed to send trade update message to Redis: {:?}", e);
+            if let Err(e) = RedisManager::get_instance()
+                .await
+                .publish_message(
+                    format!("trades@{}", market),
+                    WsMessage {
+                        stream: format!("trades@{}", market),
+                        data: WsPayload::Trade(TradeUpdateMessage {
+                            e: "trade".to_string(),
+                            t: fill.fill.trade_id,
+                            m: is_buyer_maker,
+                            p: fill.fill.price_string.clone(),
+                            q: fill.fill.qty.to_string(),
+                            s: market.to_string(),
+                        }),
+                    },
+                )
+                .await
+            {
+                eprintln!("Failed to publish trade message to Redis: {:?}", e);
             }
-        });
+        }
     }
 
-    fn create_db_trades(
+    async fn create_db_trades(
         &self,
         fills: &Vec<OrderbookFill>,
         market: &str,
         side: &Side,
         timestamp: &str,
     ) {
-        fills.iter().for_each(|fill| {
+        for fill in fills.iter() {
             let quote_quantity = fill.fill.qty.checked_mul(fill.fill.price_u64).unwrap();
-            if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
-                db_message_type: DbMessageType::TradeAdded,
-                data: DbMessageData::TradeAdd(TradeAdd {
-                    id: fill.fill.trade_id.to_string(),
-                    is_buyer_maker: matches!(side, Side::Sell),
-                    price: fill.fill.price_string.clone(),
-                    quantity: fill.fill.qty.to_string(),
-                    quote_quantity: quote_quantity.to_string(),
-                    timestamp: timestamp.to_string(),
-                    market: market.to_string(),
-                }),
-            }) {
+            if let Err(e) = RedisManager::get_instance()
+                .await
+                .push_message(DbMessage {
+                    db_message_type: DbMessageType::TradeAdded,
+                    data: DbMessageData::TradeAdd(TradeAdd {
+                        id: fill.fill.trade_id.to_string(),
+                        is_buyer_maker: matches!(side, Side::Sell),
+                        price: fill.fill.price_string.clone(),
+                        quantity: fill.fill.qty.to_string(),
+                        quote_quantity: quote_quantity.to_string(),
+                        timestamp: timestamp.to_string(),
+                        market: market.to_string(),
+                    }),
+                })
+                .await
+            {
                 eprintln!("Failed to push trade added message to Redis: {:?}", e);
             }
-        });
+        }
     }
 
-    fn update_db_orders(
+    async fn update_db_orders(
         &self,
         order: &Order,
         executed_quantity: u64,
         fills: &Vec<OrderbookFill>,
         market: &str,
     ) {
-        if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
-            db_message_type: DbMessageType::OrderUpdate,
-            data: DbMessageData::OrderUpdate(OrderUpdate {
-                order_id: order.order_id.clone(),
-                executed_quantity,
-                price: Some(order.price.to_string()),
-                market: Some(market.to_string()),
-                quantity: Some(order.quantity.to_string()),
-                side: Some(order.side.clone()),
-            }),
-        }) {
-            eprintln!("Failed to push order update message to Redis: {:?}", e);
-        }
-        fills.iter().for_each(|fill| {
-            if let Err(e) = RedisManager::get_instance().push_message(DbMessage {
+        if let Err(e) = RedisManager::get_instance()
+            .await
+            .push_message(DbMessage {
                 db_message_type: DbMessageType::OrderUpdate,
                 data: DbMessageData::OrderUpdate(OrderUpdate {
-                    order_id: fill.fill.trade_id.to_string(),
-                    executed_quantity: fill.fill.qty,
-                    price: None,
-                    market: None,
-                    quantity: None,
-                    side: None,
+                    order_id: order.order_id.clone(),
+                    executed_quantity,
+                    price: Some(order.price.to_string()),
+                    market: Some(market.to_string()),
+                    quantity: Some(order.quantity.to_string()),
+                    side: Some(order.side.clone()),
                 }),
-            }) {
+            })
+            .await
+        {
+            eprintln!("Failed to push order update message to Redis: {:?}", e);
+        }
+        for fill in fills.iter() {
+            if let Err(e) = RedisManager::get_instance()
+                .await
+                .push_message(DbMessage {
+                    db_message_type: DbMessageType::OrderUpdate,
+                    data: DbMessageData::OrderUpdate(OrderUpdate {
+                        order_id: fill.fill.trade_id.to_string(),
+                        executed_quantity: fill.fill.qty,
+                        price: None,
+                        market: None,
+                        quantity: None,
+                        side: None,
+                    }),
+                })
+                .await
+            {
                 eprintln!("Failed to push order update message to Redis: {:?}", e);
             }
-        });
+        }
     }
 
     pub fn get_random_id(&self) -> String {
