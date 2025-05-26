@@ -1,6 +1,6 @@
 # Centralized Exchange Server
 
-A high-performance centralized trading exchange built in Rust with.
+A high-performance centralized trading exchange built in Rust.
 
 ## Architecture Overview
 

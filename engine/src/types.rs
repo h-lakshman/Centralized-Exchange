@@ -2,7 +2,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DbMessageType {
     TradeAdded,
@@ -10,20 +10,20 @@ pub enum DbMessageType {
 }
 
 //Message to DB
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct DbMessage {
     #[serde(rename = "type")]
     pub db_message_type: DbMessageType,
     pub data: DbMessageData,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum DbMessageData {
     TradeAdd(TradeAdd),
     OrderUpdate(OrderUpdate),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TradeAdd {
     pub id: String,
     pub is_buyer_maker: bool,
@@ -34,7 +34,7 @@ pub struct TradeAdd {
     pub market: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct OrderUpdate {
     pub order_id: String,
     pub executed_quantity: u64,
