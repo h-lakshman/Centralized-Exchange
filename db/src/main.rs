@@ -53,8 +53,43 @@ async fn main() {
                             }
                         }
                         DbMessageType::OrderUpdate => {
-                            println!("Order updated: {:?}", db_message.data);
-                            todo!("update order in db");
+                            if let DbMessageData::OrderUpdate(order_update) = db_message.data {
+                                println!(
+                                    "Order updated: id={}, executed_qty={}",
+                                    order_update.order_id, order_update.executed_quantity
+                                );
+
+                                let timestamp = Utc::now();
+
+                                let side = order_update.side.as_ref().map(|s| s.as_str());
+
+                                let query = r#"
+                                    INSERT INTO orders (order_id, executed_quantity, price, market, quantity, side, updated_at)
+                                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                    ON CONFLICT (order_id) 
+                                    DO UPDATE SET 
+                                        executed_quantity = EXCLUDED.executed_quantity,
+                                        price = COALESCE(EXCLUDED.price, orders.price),
+                                        market = COALESCE(EXCLUDED.market, orders.market),
+                                        quantity = COALESCE(EXCLUDED.quantity, orders.quantity),
+                                        side = COALESCE(EXCLUDED.side, orders.side),
+                                        updated_at = EXCLUDED.updated_at
+                                "#;
+
+                                if let Err(e) = sqlx::query(query)
+                                    .bind(&order_update.order_id)
+                                    .bind(order_update.executed_quantity as i64)
+                                    .bind(order_update.price)
+                                    .bind(order_update.market.as_deref())
+                                    .bind(order_update.quantity)
+                                    .bind(side)
+                                    .bind(timestamp)
+                                    .execute(&mut pg_conn)
+                                    .await
+                                {
+                                    eprintln!("Failed to insert/update order in database: {}", e);
+                                }
+                            }
                         }
                     }
                 }
