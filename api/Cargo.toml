@@ -14,3 +14,12 @@ rand = "0.8"
 futures-util = "0.3"
 dotenv = "0.15"
 engine = { path = "../engine" }
+sqlx = { version = "0.8.6", features = [
+    "postgres",
+    "runtime-tokio",
+    "macros",
+    "chrono",
+    "rust_decimal",
+] }
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = "1.37"
