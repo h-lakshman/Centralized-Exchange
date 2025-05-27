@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use dotenv::dotenv;
 use engine::types::{DbMessage, DbMessageData, DbMessageType};
 use redis::{AsyncCommands, Client};
+use rust_decimal::Decimal;
 use serde_json;
 use sqlx::{error::BoxDynError, Connection, PgConnection};
 
@@ -36,14 +37,19 @@ async fn main() {
                                     .parse::<DateTime<Utc>>()
                                     .unwrap_or_else(|_| Utc::now());
 
+                                let price: Decimal = trade.price.parse().unwrap_or_default();
+                                let quantity: Decimal = trade.quantity.parse().unwrap_or_default();
+                                let quote_quantity: Decimal =
+                                    trade.quote_quantity.parse().unwrap_or_default();
+
                                 let query = "INSERT INTO trades (id, timestamp, market, price, quantity, quote_quantity, is_buyer_maker) VALUES ($1, $2, $3, $4, $5, $6, $7)";
                                 if let Err(e) = sqlx::query(query)
                                     .bind(&trade.id)
                                     .bind(timestamp)
                                     .bind(&trade.market)
-                                    .bind(&trade.price)
-                                    .bind(&trade.quantity)
-                                    .bind(&trade.quote_quantity)
+                                    .bind(price)
+                                    .bind(quantity)
+                                    .bind(quote_quantity)
                                     .bind(trade.is_buyer_maker)
                                     .execute(&mut pg_conn)
                                     .await
@@ -61,6 +67,16 @@ async fn main() {
 
                                 let timestamp = Utc::now();
 
+                                let executed_quantity: Decimal =
+                                    order_update.executed_quantity.into();
+                                let price = order_update
+                                    .price
+                                    .as_ref()
+                                    .and_then(|p| p.parse::<Decimal>().ok());
+                                let quantity = order_update
+                                    .quantity
+                                    .as_ref()
+                                    .and_then(|q| q.parse::<Decimal>().ok());
                                 let side = order_update.side.as_ref().map(|s| s.as_str());
 
                                 let query = r#"
@@ -78,10 +94,10 @@ async fn main() {
 
                                 if let Err(e) = sqlx::query(query)
                                     .bind(&order_update.order_id)
-                                    .bind(order_update.executed_quantity as i64)
-                                    .bind(order_update.price)
+                                    .bind(executed_quantity)
+                                    .bind(price)
                                     .bind(order_update.market.as_deref())
-                                    .bind(order_update.quantity)
+                                    .bind(quantity)
                                     .bind(side)
                                     .bind(timestamp)
                                     .execute(&mut pg_conn)
