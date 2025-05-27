@@ -1,29 +1,7 @@
+use crate::types::{Kline, KlinesQuery};
 use actix_web::{web, HttpResponse, Responder};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
-
-#[derive(Deserialize)]
-pub struct KlinesQuery {
-    market: String,
-    interval: String,
-    start_time: Option<String>,
-    end_time: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct Kline {
-    pub open: String,
-    pub high: String,
-    pub low: String,
-    pub close: String,
-    pub volume: String,
-    #[serde(rename = "quoteVolume")]
-    pub quote_volume: String,
-    pub trades: String,
-    pub start: String,
-    pub end: String,
-}
 
 pub async fn get_klines(data: web::Query<KlinesQuery>, pool: web::Data<PgPool>) -> impl Responder {
     let query = data.into_inner();
@@ -45,7 +23,7 @@ async fn get_klines_from_db(query: &KlinesQuery, pool: &PgPool) -> Result<Vec<Kl
         "1h" => "1 hour",
         "4h" => "4 hours",
         "1d" => "1 day",
-        _ => "1 hour", 
+        _ => "1 hour",
     };
 
     let mut time_filter = String::new();
