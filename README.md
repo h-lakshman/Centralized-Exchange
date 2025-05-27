@@ -4,28 +4,30 @@ A high-performance centralized trading exchange built in Rust.
 
 ## Architecture Overview
 
-This exchange system consists of three main services that communicate via Redis:
+This exchange system consists of four main services that communicate via Redis:
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│     API     │    │   ENGINE    │    │  WEBSOCKET  │
-│   Service   │    │   Service   │    │   Service   │
-│             │    │             │    │             │
-│ - REST API  │    │ - Order     │    │ - Real-time │
-│ - User      │    │   Matching  │    │   Updates   │
-│   Requests  │    │ - Balance   │    │ - Market    │
-│             │    │   Management│    │   Data      │
-└─────────────┘    └─────────────┘    └─────────────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-                    ┌─────────────┐
-                    │    REDIS    │
-                    │             │
-                    │ - Message   │
-                    │   Queue     │
-                    │ - PubSub    │                    
-                    └─────────────┘
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│     API     │    │   ENGINE    │    │  WEBSOCKET  │    │  DATABASE   │
+│   Service   │    │   Service   │    │   Service   │    │   Service   │
+│             │    │             │    │             │    │             │
+│ - REST API  │    │ - Order     │    │ - Real-time │    │ - Trade     │
+│ - User      │    │   Matching  │    │   Updates   │    │   Storage   │
+│   Requests  │    │ - Balance   │    │ - Market    │    │ - Order     │
+│ - Market    │    │   Management│    │   Data      │    │   History   │
+│   Data      │    │             │    │             │    │ - Analytics │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+       │                                                           │
+       └───────────────────┼───────────────────┼───────────────────┘
+                           │                   │
+                    ┌─────────────┐    ┌─────────────┐
+                    │    REDIS    │    │ POSTGRESQL  │
+                    │             │    │             │
+                    │ - Message   │    │ -TimescaleDB│
+                    │   Queue     │    │ -Trade Data │
+                    │ - PubSub    │    │ -Historical │
+                    │             │    │  Records    │
+                    └─────────────┘    └─────────────┘
 ```
 
 ## Services
@@ -38,17 +40,17 @@ This exchange system consists of three main services that communicate via Redis:
   - Order placement and cancellation
   - Market depth queries
   - Open orders retrieval
-  - User balance management
+  - Recent Trade retrieval
 
 **Endpoints**:
 
 - `POST /api/v1/order/` - Place order
 - `DELETE /api/v1/order/` - Cancel order
 - `GET /api/v1/order/open` - Get open orders
-- `GET /depth/` - Get market depth
-- `GET /klines/` - Get candlestick data
-- `GET /trades/` - Get recent trades
-- `GET /tickers/` - Get ticker data
+- `GET /api/v1/depth/` - Get market depth
+- `GET /api/v1/klines/` - Get candlestick data
+- `GET /api/v1/trades/` - Get recent trades
+- `GET /api/v1/tickers/` - Get ticker data
 
 ### 2. Engine Service (`/engine`)
 
@@ -75,7 +77,23 @@ This exchange system consists of three main services that communicate via Redis:
   - Live order book updates
   - Trade stream
   - Ticker updates
-  - User-specific notifications
+
+### 4. Database Service (`/db`)
+
+- **Technology**: PostgreSQL with TimescaleDB (Rust + sqlx)
+- **Purpose**: Persistent storage and historical data management
+- **Features**:
+  - Trade data persistence
+  - Order history tracking
+  - Time-series data optimization
+  - OHLCV candlestick generation
+
+**Database Schema**:
+
+- **Trades Table**: Stores all executed trades with precise decimal values
+- **Orders Table**: Tracks order states and execution history
+- **TimescaleDB Hypertables**: Optimized for time-series queries
+- **Indexes**: Efficient querying by market, timestamp, and order ID
 
 ## Data Flow
 
@@ -87,10 +105,22 @@ This exchange system consists of three main services that communicate via Redis:
 4. **Engine** validates balance and locks funds
 5. **Engine** matches order against orderbook
 6. **Engine** executes trades and updates balances
-7. **Engine** sends response back to API via Redis pubsub
-8. **Engine** publishes market updates to WebSocket service
-9. **API** returns response to client
-10. **WebSocket** broadcasts updates to connected clients
+7. **Engine** sends trade/order data to Database via Redis queue
+8. **Database** persists trade and order updates to PostgreSQL
+9. **Engine** sends response back to API via Redis pubsub
+10. **Engine** publishes market updates to WebSocket service
+11. **API** returns response to client
+12. **WebSocket** broadcasts updates to connected clients
+
+### Database Persistence Flow
+
+1. **Engine** creates trade records after order matching
+2. **Engine** sends trade data to Redis `db_processor` queue
+3. **Database** service consumes messages from queue
+4. **Database** stores trades with DECIMAL precision in TimescaleDB
+5. **Database** updates order execution status with UPSERT logic
+6. **API** queries database for historical data (trades, klines)
+7. **TimescaleDB** provides optimized time-series aggregations
 
 ### Real-time Updates Flow
 
@@ -105,31 +135,11 @@ This exchange system consists of three main services that communicate via Redis:
 - **Web Framework**: Actix Web
 - **Async Runtime**: Tokio
 - **Message Broker**: Redis
+- **Database**: PostgreSQL with TimescaleDB extension
+- **Database Driver**: sqlx with async support
 - **Data Structures**: BTreeMap for orderbooks
+- **Precision**: rust_decimal for financial calculations
 - **Serialization**: Serde JSON
-
-## Key Features
-
-### High Performance
-
-- **Zero-copy** operations where possible
-- **Lock-free** data structures for orderbook
-- **Async/await** for non-blocking I/O
-- **Connection pooling** for Redis
-
-### Reliability
-
-- **Atomic operations** for balance updates
-- **Transaction safety** for order execution
-- **Error handling** with proper rollbacks
-- **Message durability** via Redis persistence
-
-### Scalability
-
-- **Microservices** architecture
-- **Horizontal scaling** capability
-- **Load balancing** ready
-- **Stateless** API service
 
 ## Getting Started
 
@@ -137,8 +147,10 @@ This exchange system consists of three main services that communicate via Redis:
 
 - Rust 1.70+
 - Redis Server
+- PostgreSQL with TimescaleDB extension
 - Environment variables:
   - `REDIS_URL=redis://localhost:6379`
+  - `DATABASE_URL=postgresql://username:password@localhost:5432/exchange_db`
 
 ### Running the Services
 
@@ -148,21 +160,45 @@ This exchange system consists of three main services that communicate via Redis:
    redis-server
    ```
 
-2. **Start Engine Service**:
+2. **Start PostgreSQL with TimescaleDB**:
+
+   ```bash
+   # Install TimescaleDB extension
+   sudo apt install timescaledb-postgresql-14
+   # Or using Docker
+   docker run -d --name timescaledb -p 5432:5432 -e POSTGRES_PASSWORD=password timescale/timescaledb:latest-pg14
+   ```
+
+3. **Setup Database**:
+
+   ```bash
+   cd db
+   # Run migration to create tables
+   sqlx migrate run
+   ```
+
+4. **Start Database Service**:
+
+   ```bash
+   cd db
+   cargo run --release
+   ```
+
+5. **Start Engine Service**:
 
    ```bash
    cd engine
    cargo run --release
    ```
 
-3. **Start API Service**:
+6. **Start API Service**:
 
    ```bash
    cd api
    cargo run --release
    ```
 
-4. **Start WebSocket Service**:
+7. **Start WebSocket Service**:
    ```bash
    cd ws
    cargo run --release
@@ -173,6 +209,7 @@ This exchange system consists of three main services that communicate via Redis:
 Place an order:
 
 ```bash
+# Place an order
 curl -X POST http://localhost:8000/api/v1/order/ \
   -H "Content-Type: application/json" \
   -d '{
@@ -182,6 +219,12 @@ curl -X POST http://localhost:8000/api/v1/order/ \
     "side": "buy",
     "user_id": "1"
   }'
+
+# Get recent trades
+curl "http://localhost:8000/api/v1/trades?symbol=TATA_INR&limit=10"
+
+# Get candlestick data
+curl "http://localhost:8000/api/v1/klines?market=TATA_INR&interval=1h&start_time=2024-01-01T00:00:00Z"
 ```
 
 ## Architecture Benefits
@@ -195,14 +238,21 @@ curl -X POST http://localhost:8000/api/v1/order/ \
 - **Order Matching**: Sub-millisecond latency
 - **API Response**: < 10ms typical
 - **WebSocket Updates**: Real-time (< 1ms)
-- **Throughput**: 10,000+ orders/second per engine instance
+
+## Database Features
+
+### TimescaleDB Optimizations
+
+- **Hypertables**: Automatic partitioning by time for trades and orders
+- **Time-bucket aggregations**: Efficient OHLCV candlestick generation
 
 ## Future Enhancements
 
-- Database persistence layer
 - Authentication and authorization
 - Rate limiting
 - Market making algorithms
 - Advanced order types (stop-loss, etc.)
 - Multi-asset support
 - Compliance and reporting features
+- Database read replicas for analytics
+- Data archival and backup strategies
